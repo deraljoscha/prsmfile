@@ -717,7 +717,22 @@
   "download_url": "https://zenodo.org/api/records/8356786/files/Figure_4_-_analysis_file.prism/content",
   "license": "cc-zero",
   "size": 153764,
-  "sha256": "5a9faa7ec4f2d1a2589e0ce92a9c500081b31e71619d6a90cc6bd979f8697eb5"
+  "sha256": "5a9faa7ec4f2d1a2589e0ce92a9c500081b31e71619d6a90cc6bd979f8697eb5",
+  "creators": [
+   {
+    "name": "Dinsdale, Ria",
+    "affiliation": "University of Maryland"
+   },
+   {
+    "name": "Roache, Cooper",
+    "affiliation": "University of Maryland"
+   },
+   {
+    "name": "Meredith, Andrea",
+    "affiliation": "University of Maryland",
+    "orcid": "0000-0003-1061-2302"
+   }
+  ]
  },
  {
   "file": "8356786_1.prism",
@@ -727,7 +742,22 @@
   "download_url": "https://zenodo.org/api/records/8356786/files/Figure_3_-_analysis_file.prism/content",
   "license": "cc-zero",
   "size": 663946,
-  "sha256": "a166b406e5cfb7ff1a8b7dc21da2505c5c9e9f85c06216945349e7a8e60e4382"
+  "sha256": "a166b406e5cfb7ff1a8b7dc21da2505c5c9e9f85c06216945349e7a8e60e4382",
+  "creators": [
+   {
+    "name": "Dinsdale, Ria",
+    "affiliation": "University of Maryland"
+   },
+   {
+    "name": "Roache, Cooper",
+    "affiliation": "University of Maryland"
+   },
+   {
+    "name": "Meredith, Andrea",
+    "affiliation": "University of Maryland",
+    "orcid": "0000-0003-1061-2302"
+   }
+  ]
  },
  {
   "file": "8356786_2.prism",
@@ -737,7 +767,22 @@
   "download_url": "https://zenodo.org/api/records/8356786/files/Figure_2_-_analysis_file.prism/content",
   "license": "cc-zero",
   "size": 980061,
-  "sha256": "ab97b03f8847b1e41fd79c952565c9ecba720f6d80ad448cf3d2b98dd6c81a83"
+  "sha256": "ab97b03f8847b1e41fd79c952565c9ecba720f6d80ad448cf3d2b98dd6c81a83",
+  "creators": [
+   {
+    "name": "Dinsdale, Ria",
+    "affiliation": "University of Maryland"
+   },
+   {
+    "name": "Roache, Cooper",
+    "affiliation": "University of Maryland"
+   },
+   {
+    "name": "Meredith, Andrea",
+    "affiliation": "University of Maryland",
+    "orcid": "0000-0003-1061-2302"
+   }
+  ]
  },
  {
   "file": "8356786_3.prism",
@@ -747,6 +792,21 @@
   "download_url": "https://zenodo.org/api/records/8356786/files/Figure_1_-_analysis_file.prism/content",
   "license": "cc-zero",
   "size": 860749,
-  "sha256": "214d826a5921cc60e64f0142f4d68b12896b574508196d56d31fc2ab6f357ba3"
+  "sha256": "214d826a5921cc60e64f0142f4d68b12896b574508196d56d31fc2ab6f357ba3",
+  "creators": [
+   {
+    "name": "Dinsdale, Ria",
+    "affiliation": "University of Maryland"
+   },
+   {
+    "name": "Roache, Cooper",
+    "affiliation": "University of Maryland"
+   },
+   {
+    "name": "Meredith, Andrea",
+    "affiliation": "University of Maryland",
+    "orcid": "0000-0003-1061-2302"
+   }
+  ]
  }
 ]

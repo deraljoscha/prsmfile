@@ -8,9 +8,14 @@ version = "0.1.0"
 description = "Read GraphPad Prism .prism files (results and data tables) without Prism"
 requires-python = ">=3.10"
 license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
 classifiers = [
     "Topic :: Scientific/Engineering",
 ]
+
+[project.urls]
+Homepage = "https://github.com/deraljoscha/prsmfile"
 
 [project.scripts]
 prsmfile = "prsmfile.cli:main"
