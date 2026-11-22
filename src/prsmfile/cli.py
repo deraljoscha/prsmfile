@@ -76,8 +76,25 @@ def _run(args) -> int:
     return 0
 
 
+def _quiet_stdout() -> None:
+    """The reader of our stdout went away: stop the exit-time flush from complaining."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 def main(argv=None) -> int:
-    args = _parser().parse_args(argv)
+    try:
+        args = _parser().parse_args(argv)
+    except SystemExit as e:  # --help / --version print, then exit; the pipe may be closed
+        try:
+            sys.stdout.flush()
+        except BrokenPipeError:
+            _quiet_stdout()
+            raise SystemExit(1) from None
+        raise e
     for stream in (sys.stdout, sys.stderr):
         reconf = getattr(stream, "reconfigure", None)
         if reconf is not None:
@@ -88,11 +105,7 @@ def main(argv=None) -> int:
         return code
     except BrokenPipeError:
         # the reader went away (e.g. `| head`): silence the flush at exit
-        try:
-            devnull = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull, sys.stdout.fileno())
-        except (OSError, ValueError, AttributeError):
-            pass
+        _quiet_stdout()
         return 1
     except PrismFormatError as e:
         msg = str(e)

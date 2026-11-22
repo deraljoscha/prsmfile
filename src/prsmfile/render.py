@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import csv
+import errno
+import os
 import re
+import shutil
+import tempfile
 import unicodedata
 from pathlib import Path
 
@@ -117,10 +121,68 @@ def _write(path: Path, header, rows) -> None:
         w.writerows(rows)
 
 
+def _resolve_target(out_dir) -> Path:
+    raw = Path(out_dir)
+    if os.path.islink(raw) and not raw.exists():
+        raise PrismFormatError(f"{raw}: output path is a dangling symlink")
+    try:
+        return raw.resolve()
+    except RuntimeError as e:  # symlink loop on Python 3.10
+        raise OSError(errno.ELOOP, os.strerror(errno.ELOOP), str(raw)) from e
+
+
+def _not_empty(target: Path) -> PrismFormatError:
+    return PrismFormatError(f"{target}: output directory exists and is not empty")
+
+
+def _stage_and_publish(target: Path, build) -> None:
+    """Run build(staging_dir), then rename the staging dir to target.
+
+    The staging dir is a fresh mkdtemp in the parent of target, so a failed or
+    parallel export never leaves a partial or mixed target."""
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        raise _not_empty(target)
+    for anc in (target.parent, *target.parent.parents):
+        if anc.exists():
+            if not anc.is_dir():
+                raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), str(anc))
+            break
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent))
+    try:
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(staging, 0o777 & ~umask)  # mkdtemp creates 0700
+        build(staging)
+        if target.is_dir():
+            try:
+                target.rmdir()  # empty target is replaced by the staging dir
+            except OSError:
+                raise _not_empty(target) from None
+        try:
+            os.rename(staging, target)
+        except OSError:
+            if target.exists():
+                raise _not_empty(target) from None
+            raise
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
 def write_csv(out_dir: Path, reports, tables) -> list[Path]:
-    out_dir = Path(out_dir).resolve()
-    if out_dir.exists() and (not out_dir.is_dir() or any(out_dir.iterdir())):
-        raise PrismFormatError(f"{out_dir}: output directory exists and is not empty")
+    target = _resolve_target(out_dir)
+    written: list[Path] = []
+
+    def build(staging: Path) -> None:
+        for p in _write_all(staging, reports, tables):
+            written.append(target / p.relative_to(staging))
+
+    _stage_and_publish(target, build)
+    return written
+
+
+def _write_all(out_dir: Path, reports, tables) -> list[Path]:
     written: list[Path] = []
     for n, t in enumerate(tables, 1):
         p = out_dir / "data" / f"{n:02d}_{slug(t.title)}.csv"

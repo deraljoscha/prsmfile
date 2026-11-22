@@ -1,7 +1,11 @@
 import csv
 import io
 import json
+import os
+import subprocess
+import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -260,7 +264,7 @@ def test_csv_symlink_index_not_followed(tmp_path, capsys):
     d.mkdir()
     victim = tmp_path / "victim.txt"
     victim.write_text("precious")
-    (d / "index.csv").symlink_to(victim)
+    _symlink(d / "index.csv", victim)
     code, out, err = run_cli([p, "--csv", d], capsys)
     assert code == 1 and err.strip()
     assert victim.read_text() == "precious"
@@ -290,25 +294,135 @@ def test_csv_oserror_message(tmp_path, capsys):
     assert err.startswith("prsmfile: ") and "Not a directory" in err
 
 
-def _pipe(args, tmp_path, head):
-    import subprocess
-    import sys
-    cmd = f"{sys.executable} -m prsmfile {' '.join(map(str, args))} | head -n {head}"
-    return subprocess.run(cmd, shell=True, capture_output=True, text=True,
-                          env={"PYTHONPATH": "src", "PATH": "/usr/bin:/bin"},
-                          cwd=".")
+ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("head", [0, 1])
+def _spawn(args):
+    """Start the CLI as a child process with a stdout pipe we control."""
+    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+    return subprocess.Popen([sys.executable, "-m", "prsmfile", *map(str, args)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                            cwd=str(ROOT))
+
+
+@pytest.mark.parametrize("keep", [0, 1])
 @pytest.mark.parametrize("flag", ["--list", "--json", ""])
-def test_broken_pipe(tmp_path, flag, head):
+def test_broken_pipe(tmp_path, flag, keep):
     b = PrismBuilder()
-    for i in range(400):
+    for i in range(3000):  # output well above the pipe buffer
         b.add_analysis(f"Analysis {i}", "ONE_WAY_ANOVA", {}, {"x": 1, **OK})
     p = b.save(tmp_path / "t.prism")
-    r = _pipe([p, flag], tmp_path, head)
-    assert "Traceback" not in r.stderr and "Exception ignored" not in r.stderr, r.stderr
-    assert "BrokenPipe" not in r.stderr
+    proc = _spawn([p, *([flag] if flag else [])])
+    first = proc.stdout.readline() if keep else b""
+    proc.stdout.close()  # the reader goes away
+    err = proc.stderr.read().decode()
+    proc.stderr.close()
+    code = proc.wait()
+    assert err == "", err
+    if keep:
+        assert first.strip(), "the CLI produced no output before the pipe closed"
+    # exit status of prsmfile itself: 1 on a closed pipe, never a crash status
+    assert code == 1
+
+
+@pytest.mark.parametrize("flag", ["--help", "--version"])
+def test_help_version_closed_pipe(flag):
+    proc = _spawn([flag])
+    proc.stdout.close()
+    err = proc.stderr.read().decode()
+    proc.stderr.close()
+    code = proc.wait()
+    assert "Traceback" not in err and "Exception ignored" not in err and "BrokenPipe" not in err, err
+    assert code in (0, 1)
+
+
+@pytest.mark.parametrize("flag", ["--help", "--version"])
+def test_help_version_output(flag):
+    proc = _spawn([flag])
+    out, err = proc.communicate()
+    assert proc.returncode == 0 and err == b""
+    assert (b"--list" if flag == "--help" else b"prsmfile ") in out
+
+
+def _symlink(link, target):
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not permitted here")
+
+
+def test_csv_dangling_symlink_target_refused(tmp_path, capsys):
+    p = build_three(tmp_path)
+    link = tmp_path / "out"
+    _symlink(link, tmp_path / "nowhere")
+    code, out, err = run_cli([p, "--csv", link], capsys)
+    assert code == 1 and err.startswith("prsmfile: ") and "Traceback" not in err
+    assert not (tmp_path / "nowhere").exists()
+
+
+def test_csv_symlink_loop_exit_1(tmp_path, capsys):
+    p = build_three(tmp_path)
+    a, b = tmp_path / "a", tmp_path / "b"
+    _symlink(a, b)
+    _symlink(b, a)
+    code, out, err = run_cli([p, "--csv", a / "sub"], capsys)
+    assert code == 1 and err.startswith("prsmfile: ") and "Traceback" not in err
+
+
+def test_csv_is_atomic_failure_leaves_nothing(tmp_path, monkeypatch, capsys):
+    p = build_three(tmp_path)
+    import prsmfile.render as render
+    real = render._write
+    calls = []
+
+    def failing(path, header, rows):
+        calls.append(path)
+        if len(calls) == 2:
+            raise OSError("disk full")
+        return real(path, header, rows)
+
+    monkeypatch.setattr(render, "_write", failing)
+    target = tmp_path / "out"
+    code, out, err = run_cli([p, "--csv", target], capsys)
+    assert code == 1 and "disk full" in err
+    assert not target.exists()
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["t.prism"]  # no staging dir left
+
+
+def test_csv_stages_then_renames(tmp_path, monkeypatch):
+    p = build_three(tmp_path)
+    pf, reps = reports_of(p)
+    seen = []
+    real = os.rename
+
+    def spy(src, dst):
+        seen.append((Path(src), Path(dst), (Path(src) / "index.csv").exists()))
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "rename", spy)
+    target = tmp_path / "out"
+    files = write_csv(target, reps, [])
+    assert len(seen) == 1
+    src, dst, complete = seen[0]
+    assert dst == target.resolve() and src.parent == tmp_path.resolve() and src != dst
+    assert complete  # everything was written before the rename
+    assert all(f.is_file() and target.resolve() in f.parents for f in files)
+
+
+def test_csv_parallel_exports_one_wins(tmp_path):
+    p = build_three(tmp_path)
+    pf, reps = reports_of(p)
+    target = tmp_path / "out"
+    write_csv(target, reps, [])
+    with pytest.raises(PrismFormatError):
+        write_csv(target, reps, [])
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["out", "t.prism"]
+
+
+def test_no_absolute_developer_paths():
+    needle = "/" + "home" + "/"
+    for f in [*ROOT.glob("tests/*.py"), *ROOT.glob("src/prsmfile/**/*.py")]:
+        assert needle not in f.read_text(encoding="utf-8"), f
 
 
 def test_file_warnings_on_stderr_csv_and_list(tmp_path, capsys):
