@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import copy
+import io
 import json
 import math
+import os
 import re
+import struct
+import threading
 import zipfile
 import zlib
-import copy
 from dataclasses import dataclass, field, replace
 
 from .errors import PrismFormatError
@@ -26,16 +30,25 @@ _JSON_ERRORS = (ValueError, RecursionError)
 # Limits against zip bombs and oversized members. Real Prism files store members
 # (compression ratio 1) and stay far below these values.
 MAX_MEMBERS = 100_000  # number of entries in the archive
+MAX_DIRECTORY_SIZE = 64 * 1024 * 1024  # bytes of the central directory (the member list)
 MAX_MEMBER_SIZE = 512 * 1024 * 1024  # bytes of one member read into memory
 MAX_TOTAL_SIZE = 4 * 1024 * 1024 * 1024  # bytes across all members read from one file
 MAX_RATIO = 200  # uncompressed / compressed size of one member ...
 RATIO_MIN_SIZE = 10 * 1024 * 1024  # ... only checked for members larger than this
 _CHUNK = 1024 * 1024
+# Only these are read: the decompression of other methods (bzip2, lzma) is not
+# bounded by the chunked reads, and Prism does not write them.
+_METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
 
 
-def _read_bounded(fp, name: str, limit: int) -> bytes:
+class _BudgetError(PrismFormatError):
+    """MAX_TOTAL_SIZE used up."""
+
+
+def _read_bounded(fp, name: str, limit: int, what: str = "MAX_MEMBER_SIZE", on_chunk=None) -> bytes:
     """Read a stream to the end, raising PrismFormatError once it exceeds limit
-    bytes. Never trusts a size from the archive header."""
+    bytes. Never trusts a size from the archive header. on_chunk(n) is called with
+    the size of every chunk as soon as it has been read."""
     parts: list[bytes] = []
     got = 0
     while True:
@@ -43,11 +56,47 @@ def _read_bounded(fp, name: str, limit: int) -> bytes:
         if not chunk:
             return b"".join(parts)
         got += len(chunk)
+        if on_chunk is not None:
+            on_chunk(len(chunk))
         if got > limit:
-            raise PrismFormatError(
-                f"{name}: member larger than the limit of {limit} bytes (MAX_MEMBER_SIZE)"
-            )
+            raise PrismFormatError(f"{name}: member larger than the limit of {limit} bytes ({what})")
         parts.append(chunk)
+
+
+def _check_directory(path) -> None:
+    """Reject archives with too many members or a too large member list before
+    zipfile parses the central directory (its cost grows with both). Reads only the
+    end-of-central-directory records (and the zip64 one); the member count is
+    checked again after parsing. Anything unreadable is left to zipfile."""
+    try:
+        with io.open(os.fspath(path), "rb") as fp:
+            fp.seek(0, 2)
+            size = fp.tell()
+            tail_len = min(size, 22 + 0xFFFF + 20)  # record, longest comment, zip64 locator
+            fp.seek(size - tail_len)
+            tail = fp.read(tail_len)
+            i = tail.rfind(b"PK\x05\x06")
+            if i < 0 or len(tail) - i < 22:
+                return
+            _s, _d, _cd, _n, count, cd_size, _off, _c = struct.unpack("<4s4H2LH", tail[i:i + 22])
+            if i >= 20 and tail[i - 20:i - 16] == b"PK\x06\x07":
+                _s, _disk, off64, _disks = struct.unpack("<4sLQL", tail[i - 20:i])
+                fp.seek(off64)
+                rec = fp.read(56)
+                if len(rec) == 56 and rec[:4] == b"PK\x06\x06":
+                    fields = struct.unpack("<4sQHHLLQQQQ", rec)
+                    count, cd_size = max(count, fields[7]), max(cd_size, fields[8])
+    except (OSError, TypeError, ValueError, OverflowError, struct.error):
+        return
+    if count > MAX_MEMBERS:
+        raise PrismFormatError(
+            f"{path}: {count} members exceed the limit of {MAX_MEMBERS} (MAX_MEMBERS)"
+        )
+    if cd_size > MAX_DIRECTORY_SIZE:
+        raise PrismFormatError(
+            f"{path}: member list of {cd_size} bytes exceeds the limit of "
+            f"{MAX_DIRECTORY_SIZE} bytes (MAX_DIRECTORY_SIZE)"
+        )
 
 
 def _is_opaque(name: str) -> bool:
@@ -120,7 +169,10 @@ class PrismFile:
         self.warnings: list[str] = []
         self._analyses: list[Analysis] | None = None
         self._view_ids: frozenset[str] | None = None
-        self._total_read = 0
+        self._total_read = 0  # bytes of all reads, each member counted once (see _charge)
+        self._charged: dict[str, int] = {}
+        self._budget_lock = threading.Lock()  # PrismFile is otherwise single-threaded
+        _check_directory(path)
         try:
             self._zip = zipfile.ZipFile(path)
         except zipfile.BadZipFile:
@@ -176,30 +228,63 @@ class PrismFile:
         if msg not in self.warnings:  # members may be read by several indexes
             self.warnings.append(msg)
 
+    def _charge(self, name: str, got: int) -> None:
+        """Account for got bytes read from name in the current read. A member counts
+        with the most bytes any read of it has used, so repeated access is free."""
+        with self._budget_lock:
+            more = got - self._charged.get(name, 0)
+            if more > 0:
+                self._charged[name] = got
+                self._total_read += more
+            if self._total_read > MAX_TOTAL_SIZE:
+                raise _BudgetError(
+                    f"{name}: total size read exceeds the limit of "
+                    f"{MAX_TOTAL_SIZE} bytes (MAX_TOTAL_SIZE)"
+                )
+
     def _read_member(self, name: str) -> bytes:
-        """Bytes of a member, within MAX_MEMBER_SIZE, MAX_RATIO and MAX_TOTAL_SIZE."""
+        """Bytes of a member, within MAX_MEMBER_SIZE, MAX_RATIO and MAX_TOTAL_SIZE.
+        The data must be exactly as long as the header says."""
         info = self._zip.getinfo(name)
-        if info.file_size > MAX_MEMBER_SIZE:
+        if info.compress_type not in _METHODS:
             raise PrismFormatError(
-                f"{name}: member size {info.file_size} exceeds the limit of "
+                f"{name}: unsupported compression method {info.compress_type} (only stored and deflate)"
+            )
+        declared = info.file_size
+        if declared > MAX_MEMBER_SIZE:
+            raise PrismFormatError(
+                f"{name}: member size {declared} exceeds the limit of "
                 f"{MAX_MEMBER_SIZE} bytes (MAX_MEMBER_SIZE)"
             )
-        if info.file_size > RATIO_MIN_SIZE and info.file_size > MAX_RATIO * info.compress_size:
+        if declared > RATIO_MIN_SIZE and declared > MAX_RATIO * info.compress_size:
             raise PrismFormatError(
                 f"{name}: compression ratio exceeds the limit of {MAX_RATIO} (MAX_RATIO)"
             )
-        room = MAX_TOTAL_SIZE - self._total_read
-        with self._zip.open(info) as fp:
+        mismatch = PrismFormatError(f"{name}: data size differs from the size {declared} in the archive header")
+        # zipfile stops reading at file_size: one byte more lets the reader show data
+        # that is longer than the header says instead of silently truncating it
+        probe = copy.copy(info)
+        probe.file_size = declared + 1
+        seen = 0
+
+        def count(n: int) -> None:
+            nonlocal seen
+            seen += n
+            self._charge(name, seen)
+
+        with self._zip.open(probe) as fp:
             try:
-                data = _read_bounded(fp, name, min(MAX_MEMBER_SIZE, room))
-            except PrismFormatError:
-                if room < MAX_MEMBER_SIZE:
-                    raise PrismFormatError(
-                        f"{name}: total size read exceeds the limit of "
-                        f"{MAX_TOTAL_SIZE} bytes (MAX_TOTAL_SIZE)"
-                    ) from None
+                data = _read_bounded(fp, name, declared, "size in the archive header", count)
+            except _BudgetError:
                 raise
-        self._total_read += len(data)
+            except PrismFormatError:
+                raise mismatch from None
+            except zipfile.BadZipFile:
+                if seen != declared:  # the CRC fails because the length is wrong
+                    raise mismatch from None
+                raise
+        if len(data) != declared:
+            raise mismatch
         return data
 
     def read_text(self, name: str) -> str | None:

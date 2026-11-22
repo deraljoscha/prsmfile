@@ -548,3 +548,150 @@ def test_cli_oversized_document_exit_1(tmp_path, monkeypatch, capsys):
     p = _mem_zip(tmp_path, {})
     assert cli.main([str(p), "--list"]) == 1
     assert "MAX_MEMBER_SIZE" in capsys.readouterr().err
+
+
+# ---- review round: limits hardening ----
+
+import struct
+import threading
+import zlib
+
+
+def _patch_cd(path, member, **fields):
+    """Rewrite fields (crc, csize, size) of one central directory record."""
+    offs = {"crc": (16, "<L"), "csize": (20, "<L"), "size": (24, "<L")}
+    raw = bytearray(path.read_bytes())
+    i = raw.find(b"PK\x01\x02")
+    while i >= 0:
+        nlen = struct.unpack("<H", raw[i + 28:i + 30])[0]
+        if bytes(raw[i + 46:i + 46 + nlen]) == member.encode():
+            for k, v in fields.items():
+                o, f = offs[k]
+                struct.pack_into(f, raw, i + o, v)
+            path.write_bytes(bytes(raw))
+            return
+        i = raw.find(b"PK\x01\x02", i + 1)
+    raise AssertionError("member not in central directory")
+
+
+def test_unsupported_compression_rejected(tmp_path):
+    for method in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
+        p = tmp_path / "c.prism"
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("document.json", '{"formatVersion": "1-0"}')
+            z.writestr("x.json", '{"a": 1}', compress_type=method)
+        with prsmfile.open(p) as pf:
+            with pytest.raises(PrismFormatError) as e:
+                pf.read_text("x.json")
+        assert "x.json" in str(e.value) and "compression" in str(e.value)
+        with zipfile.ZipFile(p, "w", method) as z:  # document.json itself: open fails
+            z.writestr("document.json", '{"formatVersion": "1-0"}')
+        with pytest.raises(PrismFormatError):
+            prsmfile.open(p)
+
+
+def test_stored_and_deflated_accepted(tmp_path):
+    for c in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        p = _mem_zip(tmp_path, {"a.json": '{"k": 1}'}, c)
+        with prsmfile.open(p) as pf:
+            assert pf.read_json("a.json") == {"k": 1}
+
+
+def _no_directory_parse(monkeypatch):
+    def boom(self):
+        raise AssertionError("central directory was parsed")
+
+    monkeypatch.setattr(zipfile.ZipFile, "_RealGetContents", boom)
+
+
+def test_member_count_checked_before_directory_parse(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "MAX_MEMBERS", 5)
+    p = _mem_zip(tmp_path, {f"x/{i}.json": "{}" for i in range(10)})
+    _no_directory_parse(monkeypatch)
+    with pytest.raises(PrismFormatError) as e:
+        prsmfile.open(p)
+    assert "MAX_MEMBERS" in str(e.value)
+
+
+def test_member_count_zip64_record_checked_before_directory_parse(tmp_path, monkeypatch):
+    p = _mem_zip(tmp_path, {"a.json": "{}"})
+    raw = p.read_bytes()
+    e = raw.rfind(b"PK\x05\x06")
+    _sig, _d, _cd, n, _nt, cd_size, cd_off, _c = struct.unpack("<4s4H2LH", raw[e:e + 22])
+    z64 = struct.pack("<4sQHHLLQQQQ", b"PK\x06\x06", 44, 45, 45, 0, 0, n, 10_000_000, cd_size, cd_off)
+    loc = struct.pack("<4sLQL", b"PK\x06\x07", 0, e, 1)
+    eocd = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 0xFFFF, 0xFFFF, cd_size, 0xFFFFFFFF, 0)
+    p.write_bytes(raw[:e] + z64 + loc + eocd)
+    _no_directory_parse(monkeypatch)
+    with pytest.raises(PrismFormatError) as ex:
+        prsmfile.open(p)
+    assert "MAX_MEMBERS" in str(ex.value)
+
+
+def test_directory_size_checked_before_directory_parse(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "MAX_DIRECTORY_SIZE", 100)
+    p = _mem_zip(tmp_path, {f"x/{i}.json": "{}" for i in range(10)})
+    _no_directory_parse(monkeypatch)
+    with pytest.raises(PrismFormatError) as e:
+        prsmfile.open(p)
+    assert "MAX_DIRECTORY_SIZE" in str(e.value)
+
+
+def test_header_size_smaller_than_data_raises(tmp_path):
+    # real zip metadata: central directory size and CRC patched to the first 10 bytes
+    body = '{"k": "' + "v" * 5000 + '"}'
+    p = _mem_zip(tmp_path, {"liar.json": body}, zipfile.ZIP_DEFLATED)
+    _patch_cd(p, "liar.json", size=10, crc=zlib.crc32(body.encode()[:10]))
+    with zipfile.ZipFile(p) as z:
+        assert z.getinfo("liar.json").file_size == 10
+    with prsmfile.open(p) as pf:
+        with pytest.raises(PrismFormatError) as e:
+            pf.read_text("liar.json")
+    assert "liar.json" in str(e.value)
+
+
+def test_header_size_larger_than_data_raises(tmp_path):
+    body = '{"k": "' + "v" * 5000 + '"}'
+    p = _mem_zip(tmp_path, {"liar.json": body}, zipfile.ZIP_DEFLATED)
+    _patch_cd(p, "liar.json", size=len(body) + 50)
+    with prsmfile.open(p) as pf:
+        with pytest.raises(PrismFormatError):
+            pf.read_text("liar.json")
+
+
+def test_failed_read_counts_toward_total(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", 3000)
+    body = '{"k": "' + "v" * 2000 + '"}'
+    p = _mem_zip(tmp_path, {"a.json": body, "b.json": body}, zipfile.ZIP_DEFLATED)
+    _patch_cd(p, "a.json", size=10, crc=zlib.crc32(body.encode()[:10]))
+    with prsmfile.open(p) as pf:
+        with pytest.raises(PrismFormatError):
+            pf.read_text("a.json")  # read bytes, then failed
+        assert pf._total_read > 0
+        # b.json alone fits, but the bytes of the failed read are spent
+        monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", pf._total_read + 100)
+        with pytest.raises(PrismFormatError) as e:
+            pf.read_text("b.json")
+    assert "MAX_TOTAL_SIZE" in str(e.value)
+
+
+def test_rereading_a_member_counts_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", 3000)
+    p = _mem_zip(tmp_path, {"a.json": " " * 1500})
+    with prsmfile.open(p) as pf:
+        for _ in range(20):
+            assert len(pf.read_text("a.json")) == 1500
+
+
+def test_concurrent_reads_share_budget_consistently(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", 10_000_000)
+    members = {f"m{i}.json": " " * 100_000 for i in range(8)}
+    p = _mem_zip(tmp_path, members)
+    with prsmfile.open(p) as pf:
+        before = pf._total_read
+        ts = [threading.Thread(target=lambda n=n: [pf.read_text(n) for _ in range(5)]) for n in members]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        assert pf._total_read == before + 8 * 100_000
