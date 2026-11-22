@@ -60,10 +60,21 @@ def dataset_title(ds: dict) -> str | None:
     return _text(t)
 
 
+def _int_idx(v) -> int | None:
+    """int, or integral float (bool excluded); else None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    return None
+
+
 def _idx(part) -> float:
     if isinstance(part, dict):
-        v = part.get("idx")
-        if isinstance(v, int) and not isinstance(v, bool):
+        v = _int_idx(part.get("idx"))
+        if v is not None:
             return v
     return float("inf")
 
@@ -96,8 +107,8 @@ def entries(coll: dict | None) -> list[tuple[dict | list, object]]:
 
 def _col_part(col, with_letter: bool) -> str:
     col = col if isinstance(col, dict) else {}
-    idx = col.get("idx")
-    letter_ = letter(idx) if isinstance(idx, int) and not isinstance(idx, bool) else ""
+    idx = _int_idx(col.get("idx"))
+    letter_ = letter(idx) if idx is not None else ""
     title = _text(col.get("title"))
     if with_letter:
         if title is None:
@@ -108,8 +119,8 @@ def _col_part(col, with_letter: bool) -> str:
 
 def _row_part(row) -> str:
     row = row if isinstance(row, dict) else {}
-    idx = row.get("idx")
-    base = f"row {idx + 1}" if isinstance(idx, int) and not isinstance(idx, bool) else "row"
+    idx = _int_idx(row.get("idx"))
+    base = f"row {idx + 1}" if idx is not None else "row"
     title = _text(row.get("title"))
     return f"{base}:{title}" if title is not None else base
 
