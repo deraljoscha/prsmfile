@@ -7,7 +7,10 @@ def num(x) -> float | None:
     """Return x as float; bool, strings (e.g. "undefined") and None give None."""
     if isinstance(x, bool) or not isinstance(x, (int, float)):
         return None
-    return float(x)
+    try:
+        return float(x)
+    except OverflowError:  # int too large for a float
+        return None
 
 
 @dataclass(frozen=True)

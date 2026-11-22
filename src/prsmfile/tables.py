@@ -5,7 +5,7 @@ import csv
 import io
 from dataclasses import dataclass, field
 
-from .values import dataset_title, letter
+from .values import dataset_title, int_idx, letter
 
 _SUBCOLUMNS = {
     "y_sd_n": ("Mean", "SD", "N"),
@@ -57,34 +57,42 @@ def _name_text(n) -> str | None:
     return _str(n)
 
 
+def _fmt(x) -> str | None:
+    """Format names are strings; anything else (unhashable, numbers) is unknown."""
+    return x if isinstance(x, str) else None
+
+
 def _sub_titles(pf, table: dict) -> dict[tuple[int, int], str]:
     uid = table.get("subcolumnTitlesDataSet")
     ds = pf.read_json(f"data/sets/{uid}.json") if isinstance(uid, str) and "/" not in uid else None
     out: dict[tuple[int, int], str] = {}
     titles = ds.get("titles") if ds else None
     for col in titles if isinstance(titles, list) else []:
-        if not isinstance(col, dict) or isinstance(col.get("column"), bool) \
-                or not isinstance(col.get("column"), int):
+        if not isinstance(col, dict):
             continue
-        for rep in col.get("replicates") or []:
-            if not isinstance(rep, dict) or isinstance(rep.get("replicate"), bool) \
-                    or not isinstance(rep.get("replicate"), int):
+        ci = int_idx(col.get("column"))
+        reps = col.get("replicates")
+        if ci is None or not isinstance(reps, list):
+            continue
+        for rep in reps:
+            if not isinstance(rep, dict):
                 continue
+            ri = int_idx(rep.get("replicate"))
             name = _name_text(rep.get("name"))
-            if name:
-                out[(col["column"], rep["replicate"])] = name
+            if ri is not None and name:
+                out[(ci, ri)] = name
     return out
 
 
 def _headers(base: str, fmt, width: int, col: int, subs) -> list[str]:
     if width == 1:
         return [base]
-    names = _SUBCOLUMNS.get(fmt)
-    if names is not None and len(names) == width:
-        return [f"{base} {n}" for n in names]
+    names = _SUBCOLUMNS.get(fmt) if fmt else None
     out = []
     for i in range(width):
-        if fmt in _PAIR_FORMATS:
+        if names is not None and i < len(names):
+            out.append(f"{base} {names[i]}")
+        elif fmt in _PAIR_FORMATS:
             out.append(f"{base} {i + 1}")
         else:
             out.append(f"{base} {subs.get((col, i), i + 1)}")
@@ -101,11 +109,15 @@ def _declared_headers(pf, table: dict) -> list[str]:
     cols: list[str] = []
     if table.get("rowTitlesDataSet"):
         cols.append("Row title")
-    x = _read_set(pf, table.get("xDataSet"))
-    if x is not None and x.get("format") != "series":
-        base = dataset_title(x) or "X"
-        w = 2 if x.get("format") in _PAIR_FORMATS else 1
-        cols.extend([base] if w == 1 else [f"{base} {i + 1}" for i in range(w)])
+    if table.get("xDataSet"):
+        x = _read_set(pf, table.get("xDataSet"))
+        # a missing x file still reserves its column(s): Y headers must not shift
+        xfmt = _fmt(x.get("format")) if x is not None else None
+        xfmt = xfmt or _fmt(table.get("xDataSetFormat"))
+        if xfmt != "series":
+            base = (dataset_title(x) if x is not None else None) or "X"
+            w = 2 if xfmt in _PAIR_FORMATS else 1
+            cols.extend([base] if w == 1 else [f"{base} {i + 1}" for i in range(w)])
     subs = _sub_titles(pf, table)
     sets = table.get("dataSets")
     for i, uid in enumerate(sets if isinstance(sets, list) else []):
@@ -114,7 +126,7 @@ def _declared_headers(pf, table: dict) -> list[str]:
             cols.append(letter(i))
             continue
         base = dataset_title(ds) or letter(i)
-        cols.extend(_headers(base, ds.get("format"), _width(ds), i, subs))
+        cols.extend(_headers(base, _fmt(ds.get("format")), _width(ds), i, subs))
     return cols
 
 
@@ -131,9 +143,16 @@ def read_table(pf, sheet_id: str) -> Table | None:
     prefix = f"data/tables/{uid}/"
     if not any(n.startswith(prefix) for n in pf._names):
         return None
-    text = pf.read_text(prefix + "data.csv") or ""
+    title = _str(sheet.get("title")) or "(untitled)"
+    if prefix + "data.csv" not in pf._names:
+        pf.warnings.append(f"Missing data.csv for table {title}")
+        text = ""
+    else:
+        text = pf.read_text(prefix + "data.csv")
+        if text is None:  # unreadable or undecodable: read_text already warned
+            return None
     try:
-        rows = list(csv.reader(io.StringIO(text, newline="")))
+        rows = list(csv.reader(io.StringIO(text, newline=""), strict=True))
     except csv.Error as e:
         pf.warnings.append(f"Could not parse {prefix}data.csv ({e})")
         return None
@@ -142,12 +161,11 @@ def read_table(pf, sheet_id: str) -> Table | None:
         widest = max(len(r) for r in rows)
         columns = columns[:widest]
         columns += [f"Column {n}" for n in range(len(columns) + 1, widest + 1)]
-    fmt, dfmt = table.get("format"), table.get("dataFormat")
     return Table(
         sheet_id=sheet_id,
-        title=_str(sheet.get("title")) or "(untitled)",
-        table_format=fmt if isinstance(fmt, str) else None,
-        data_format=dfmt if isinstance(dfmt, str) else None,
+        title=title,
+        table_format=_fmt(table.get("format")),
+        data_format=_fmt(table.get("dataFormat")),
         columns=columns,
         rows=rows,
     )

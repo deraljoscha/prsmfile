@@ -379,3 +379,42 @@ def test_alert_original_text_and_order(tmp_path):
     with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
         a = pf.analyses()[0]
     assert a.alerts == ["Alert one\r\nline two", "Note: A", "Z note", "A note"]
+
+
+def test_listed_order_neither_title_nor_uid_order(tmp_path):
+    import itertools
+    b = PrismBuilder()
+    ids = {t: b.add_analysis(t, "ONE_WAY_ANOVA", {}, {"status": {}}) for t in ("Mid", "Zed", "Abe")}
+    p = b.save(tmp_path / "a.prism")
+    by_title = [ids[t] for t in sorted(ids)]
+    by_uid = sorted(ids.values())
+    creation = list(ids.values())
+    pick = next(o for o in itertools.permutations(ids.values())
+                if list(o) not in (by_title, by_uid, creation))
+    with zipfile.ZipFile(p) as z:
+        items = [(n, z.read(n)) for n in z.namelist()]
+    with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, d in items:
+            if n == "document.json":
+                doc = json.loads(d)
+                doc["sheets"]["analyses"] = list(pick)
+                d = json.dumps(doc).encode()
+            z.writestr(n, d)
+    with prsmfile.open(p) as pf:
+        assert [a.id for a in pf.analyses()] == list(pick)
+
+
+def test_view_idx_huge_int_and_ints_stay_exact(tmp_path):
+    b = PrismBuilder()
+    aid = b.add_analysis("A1", "ONE_WAY_ANOVA", {}, {"status": {}},
+                         views=[("big", [["x"]]), ("two", [["y"]]), ("none", [["z"]]), ("one", [["w"]])])
+    base = f"analyses/{aid}/result_sheets/"
+    sheet = json.loads(b._members[f"analyses/{aid}/sheet.json"])
+    uids = [r["uid"] for r in sheet["resultSheets"]]
+    raw = {"big": "1" + "0" * 400, "two": "2", "none": '"x"', "one": "1.5"}
+    for uid, name in zip(uids, raw):
+        b.add_member(base + f"{uid}.json", (
+            '{"@class": "AnalysisView", "uid": "%s", "name": "%s", "viewIdx": %s, "dataSheet": "S"}'
+            % (uid, name, raw[name])).encode())
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        assert [v[0] for v in pf.analyses()[0].views] == ["one", "two", "big", "none"]

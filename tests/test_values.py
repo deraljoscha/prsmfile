@@ -134,3 +134,7 @@ def test_label_float_idx_and_combined():
     assert label({"row": {"idx": 0, "title": "Day 1"}, "col": {"idx": 0, "title": "WT"},
                   "model": {"name": "Model 1", "title": "Top"}}) == "row 1:Day 1 A:WT:Top"
     assert label({"col": {"idx": 0, "title": "WT"}, "model": {"name": "Model 1", "title": " "}}) == "A:WT:Model 1"
+
+
+def test_num_huge_int_is_none():
+    assert num(10**400) is None

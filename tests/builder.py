@@ -1,8 +1,6 @@
 """Synthetic .prism builder matching docs/format.md sections 1.2 to 1.4."""
 from __future__ import annotations
 
-import csv
-import io
 import json
 import uuid
 import zipfile
@@ -31,6 +29,7 @@ class PrismBuilder:
         self._n = 0
         self._sets: dict[str, list[str]] = {}
         self._last_raw: str | None = None
+        self._view_titles: dict[str, str] = {}
 
     def _uid(self) -> str:
         self._n += 1
@@ -51,12 +50,16 @@ class PrismBuilder:
             out[key] = {"id": id_, "value": value}
         return out
 
-    def _csv(self, rows: list[list[str]]) -> bytes:
-        if not rows:
-            return b""
-        buf = io.StringIO(newline="")
-        csv.writer(buf, lineterminator="\n").writerows(rows)
-        return buf.getvalue().encode("utf-8")
+    @staticmethod
+    def _csv(rows: list[list[str]]) -> bytes:
+        """RFC 4180 with LF row ends; cells with comma, quote, CR or LF are quoted
+        (the csv module does not quote a bare CR on Python 3.10)."""
+        def cell(c: str) -> str:
+            if any(ch in c for ch in ',"\r\n'):
+                return '"' + c.replace('"', '""') + '"'
+            return c
+
+        return "".join(",".join(cell(c) for c in r) + "\n" for r in rows).encode("utf-8")
 
     def _write_table(self, rows: list[list[str]]) -> str:
         t = self._uid()
@@ -187,7 +190,9 @@ class PrismBuilder:
             if ititle is not None:
                 entry["title"] = ititle
             sheet["inputDataSets"].append(entry)
-        sheet["inputSheets"] = [{"uid": u, "title": self._titles[u]} for u in input_sheets]
+        sheet["inputSheets"] = [
+            {"uid": u, "title": self._titles.get(u) or self._view_titles[u]} for u in input_sheets
+        ]
         self._members[base + "parameters.json"] = self._dump(
             {"@class": "AnalysisParameters", "version": "0.0.0", "content": parameters}
         )
@@ -202,12 +207,15 @@ class PrismBuilder:
             name, vrows = view[0], view[1]
             fmt = view[2] if len(view) > 2 else "text"
             ncols = view[3] if len(view) > 3 else None  # csv column count
+            width = view[4] if len(view) > 4 else None  # subcolumns per data set
             v, r = self._uid(), self._uid()
             tuid = self._uid() if vrows is None else self._write_table(vrows)
             if ncols is None:
                 ncols = 1 if vrows is None else max((len(x) for x in vrows), default=0)
-            w = _WIDTH.get(fmt, 1)
+            w = width or _WIDTH.get(fmt, 1)
             vsets = [self._write_set(None, fmt, w) for _ in range(-(-ncols // w))]
+            self._sets[r] = vsets
+            self._view_titles[r] = f"{title}:{name}"
             sheet["resultSheets"].append({"uid": v, "title": name})
             self._members[base + f"result_sheets/{v}.json"] = self._dump(
                 {"@class": "AnalysisView", "uid": v, "name": name, "viewIdx": idx, "dataSheet": r}

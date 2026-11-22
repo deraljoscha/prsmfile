@@ -8,7 +8,7 @@ import zlib
 from dataclasses import dataclass, field
 
 from .errors import PrismFormatError
-from .values import letter, num
+from .values import letter
 
 _SHEET_RE = re.compile(r"analyses/([^/]+)/sheet\.json")
 _READ_ERRORS = (
@@ -157,7 +157,12 @@ class PrismFile:
         """The data table behind a view's result sheet id, or None."""
         from .tables import read_table
 
+        if sheet_id not in self._view_sheet_ids():
+            return None
         return read_table(self, sheet_id)
+
+    def _view_sheet_ids(self) -> set[str]:
+        return {ds for a in self.analyses() for _, ds in a.views if ds is not None}
 
     def analyses(self) -> list[Analysis]:
         if self._analyses is None:
@@ -227,13 +232,14 @@ class PrismFile:
             v = self.read_json(f"{base}result_sheets/{uid}.json")
             if v is None:
                 continue
-            key = num(v.get("viewIdx"))
-            if key is not None and not math.isfinite(key):
-                key = None
+            key = v.get("viewIdx")
+            ok = (isinstance(key, int) and not isinstance(key, bool)) or (
+                isinstance(key, float) and math.isfinite(key)
+            )
             name = v.get("name")
             ds = v.get("dataSheet")
             out.append((
-                float("inf") if key is None else key,
+                (0, key) if ok else (1, 0),  # ints stay exact; missing last
                 (name if _text(name) else "", ds if isinstance(ds, str) else None),
             ))
         out.sort(key=lambda p: p[0])  # stable

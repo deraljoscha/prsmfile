@@ -129,3 +129,30 @@ def test_saved_zip_structure(tmp_path):
     view = js(m, [n for n in m if "/result_sheets/" in n][0])
     rt = js(m, f"data/sheets/{view['dataSheet']}/sheet.json")["table"]["uid"]
     assert rt != view["dataSheet"]
+
+
+def test_csv_quotes_cr_and_lf(tmp_path):
+    b = PrismBuilder()
+    sid = b.add_raw_table("T", "column", [("a", "text", 1)], [["x\ry"], ["p\nq"], ["a,b"], ['q"q'], ["plain"]])
+    m = members(b.save(tmp_path / "a.prism"))
+    t = js(m, f"data/sheets/{sid}/sheet.json")["table"]["uid"]
+    assert m[f"data/tables/{t}/data.csv"] == '"x\ry"\n"p\nq"\n"a,b"\n"q""q"\nplain\n'.encode()
+
+
+def test_view_per_data_set_width_override(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("A", "ONE_WAY_ANOVA", {}, None, views=[("V", [list("abcdef")], "y_replicates", 6, 3)])
+    m = members(b.save(tmp_path / "a.prism"))
+    view = js(m, [n for n in m if "/result_sheets/" in n][0])
+    t = js(m, f"data/sheets/{view['dataSheet']}/sheet.json")["table"]
+    assert [len(js(m, f"data/sets/{u}.json")["replicates"]) for u in t["dataSets"]] == [3, 3]
+
+
+def test_explicit_uid_from_result_view_adds_its_sheet(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("First", "ONE_WAY_ANOVA", {}, None, views=[("V", [["1", "2"]])])
+    result_sheet = list(b._sets)[0]
+    a2 = b.add_analysis("Chained", "ONE_WAY_ANOVA", {}, None,
+                        inputs=[("A", "c", b.data_sets(result_sheet)[0])])
+    m = members(b.save(tmp_path / "y.prism"))
+    assert js(m, f"analyses/{a2}/sheet.json")["inputSheets"] == [{"uid": result_sheet, "title": "First:V"}]
