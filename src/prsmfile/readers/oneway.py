@@ -9,7 +9,6 @@ from .common import (
     anova_row,
     comparisons_section,
     descriptive_section,
-    family_rows,
     letters_section,
     parameters_section,
 )
@@ -40,6 +39,13 @@ def _assumption_rows(model: dict) -> list[list]:
     return rows
 
 
+def _per_family(mc: dict):
+    """One-way results store comparisonCount; familyCount and comparisonPerFamilyCount are
+    only read when present (not seen in the corpus)."""
+    v = num(mc.get("comparisonPerFamilyCount"))
+    return v if v is not None else num(mc.get("comparisonCount"))
+
+
 @register("ONE_WAY_ANOVA")
 def read_oneway(pf, a, warn):
     results = a.results
@@ -57,7 +63,8 @@ def read_oneway(pf, a, warn):
         ("Design", _str(params.get("experimentalDesign"))),
         ("Post test design", _str(pairwise.get("type"))),
         ("Method", _str(mc.get("method"))),
-        *family_rows(mc),
+        ("Comparison families", num(mc.get("familyCount"))),
+        ("Comparisons per family", _per_family(mc)),
     ])
     if parameters.rows:
         sections.append(parameters)

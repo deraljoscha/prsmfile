@@ -214,3 +214,12 @@ def test_compact_letter_display(tmp_path):
     r = run(tmp_path, res(model(compactLetterDisplay=cld)))
     s = sec(r, "Compact letter display")
     assert s.columns == ["Cell", "Group"] and s.rows == [["A:ctrl", "A B"], ["B:asp", "B"]]
+
+
+def test_comparison_count_parameter(tmp_path):
+    m = mc("Tukey", [((0, "ctrl"), (1, "asp"), pair(-4.0, p_adj=0.5))])
+    m["comparisonCount"] = 15
+    r = run(tmp_path, res(model(multipleComparisons=m)))
+    rows = sec(r, "Parameters").rows
+    assert ["Comparisons per family", 15.0] in rows
+    assert not any(row[0] == "Comparison families" for row in rows)
