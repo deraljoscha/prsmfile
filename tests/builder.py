@@ -59,7 +59,12 @@ class PrismBuilder:
                 return '"' + c.replace('"', '""') + '"'
             return c
 
-        return "".join(",".join(cell(c) for c in r) + "\n" for r in rows).encode("utf-8")
+        def line(r: list[str]) -> str:
+            if r == [""]:  # a bare empty line would read back as no row
+                return '""\n'
+            return ",".join(cell(c) for c in r) + "\n"
+
+        return "".join(line(r) for r in rows).encode("utf-8")
 
     def _write_table(self, rows: list[list[str]]) -> str:
         t = self._uid()
@@ -191,7 +196,7 @@ class PrismBuilder:
                 entry["title"] = ititle
             sheet["inputDataSets"].append(entry)
         sheet["inputSheets"] = [
-            {"uid": u, "title": self._titles.get(u) or self._view_titles[u]} for u in input_sheets
+            {"uid": u, "title": self._titles[u] if u in self._titles else self._view_titles[u]} for u in input_sheets
         ]
         self._members[base + "parameters.json"] = self._dump(
             {"@class": "AnalysisParameters", "version": "0.0.0", "content": parameters}

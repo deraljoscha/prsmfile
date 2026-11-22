@@ -318,3 +318,84 @@ def test_raw_tables_listed_order(tmp_path):
     rewrite_document(p, lambda d: d["sheets"].__setitem__("data", list(pick)))
     with prsmfile.open(p) as pf:
         assert pf.data_tables() == list(pick)
+
+
+@pytest.mark.parametrize("bad", [[], ["a", "b"], [5], 5, {"x": 1}, "a/b", "", None])
+def test_invalid_x_reference_reserves_no_column(tmp_path, bad):
+    b = PrismBuilder()
+    sid = b.add_raw_table("T", "xy", [("S", "y_single", 1)], [["2"]], x_data_set=("T", "y_single", 1))
+    table = json.loads(b._members[f"data/sheets/{sid}/sheet.json"])["table"]
+    table["xDataSet"] = bad
+    put_json(b, f"data/sheets/{sid}/sheet.json", table=table)
+    assert table_of(tmp_path, b, sid).columns == ["S"]
+
+
+def test_result_table_does_not_load_analysis_content(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("An", "ONE_WAY_ANOVA", {}, {"status": {"error": "VALID"}}, views=[("V", [["x"]])])
+    p = b.save(tmp_path / "t.prism")
+    with prsmfile.open(p) as pf:
+        ds = next(n for n in pf._names if n.startswith("data/sheets/")).split("/")[2]
+        reads = []
+        orig = pf.read_json
+        pf.read_json = lambda name: (reads.append(name), orig(name))[1]
+        assert pf.result_table(ds).rows == [["x"]]
+        assert pf.result_table(ds) is not None
+        assert not any(n.endswith(("parameters.json", "results.json")) for n in reads)
+        assert pf._analyses is None
+        n_first = len(reads)
+        pf.result_table(ds)
+        assert not any("analyses/" in n for n in reads[n_first:])
+
+
+def test_result_table_independent_of_mutable_views(tmp_path):
+    b = PrismBuilder()
+    raw = b.add_raw_table("R", "column", [("A", "y_single", 1)], [["1"]])
+    b.add_analysis("An", "ONE_WAY_ANOVA", {}, None, views=[("V", [["x"]])])
+    with prsmfile.open(b.save(tmp_path / "t.prism")) as pf:
+        a = pf.analyses()[0]
+        real = a.views[0][1]
+        a.views.append(("evil", raw))
+        a.views.clear()
+        assert pf.result_table(raw) is None
+        assert pf.result_table(real).rows == [["x"]]
+        assert pf.analyses()[0].views[0][1] == real
+        pf.analyses()[0].views.clear()
+        assert pf.analyses()[0].views[0][1] == real
+
+
+def test_result_table_unhashable_id(tmp_path):
+    b = PrismBuilder()
+    b.add_raw_table("R", "column", [("A", "y_single", 1)], [["1"]])
+    with prsmfile.open(b.save(tmp_path / "t.prism")) as pf:
+        assert pf.result_table(["x"]) is None
+        assert pf.result_table({}) is None
+        assert pf.result_table(None) is None
+
+
+def test_result_table_orphan_sheet_is_none(tmp_path):
+    b = PrismBuilder()
+    orphan = b.add_raw_table("Orphan", "column", [("A", "y_single", 1)], [["1"]])
+    b.add_analysis("An", "ONE_WAY_ANOVA", {}, None, views=[("V", [["x"]])])
+    p = b.save(tmp_path / "t.prism")
+    rewrite_document(p, lambda d: d["sheets"].__setitem__("data", []))
+    with prsmfile.open(p) as pf:
+        assert pf.data_tables() == []
+        assert read_table(pf, orphan) is not None  # the member exists
+        assert pf.result_table(orphan) is None
+
+
+def test_view_sort_adjacent_huge_ints_reverse_stored(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("An", "ONE_WAY_ANOVA", {}, None, views=[("First", [["1"]]), ("Second", [["2"]])])
+    for name in [n for n in b._members if "/result_sheets/" in n]:
+        obj = json.loads(b._members[name])
+        big = {"First": 9007199254740992, "Second": 9007199254740993}[obj["name"]]
+        # stored in reverse of the sort order
+        b.add_member(name, json.dumps({**obj, "viewIdx": big}).encode())
+    sheet = next(n for n in b._members if n.endswith("/sheet.json") and n.startswith("analyses/"))
+    obj = json.loads(b._members[sheet])
+    obj["resultSheets"].reverse()
+    b.add_member(sheet, json.dumps(obj).encode())
+    with prsmfile.open(b.save(tmp_path / "t.prism")) as pf:
+        assert [v[0] for v in pf.analyses()[0].views] == ["First", "Second"]

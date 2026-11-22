@@ -109,8 +109,9 @@ def _declared_headers(pf, table: dict) -> list[str]:
     cols: list[str] = []
     if table.get("rowTitlesDataSet"):
         cols.append("Row title")
-    if table.get("xDataSet"):
-        x = _read_set(pf, table.get("xDataSet"))
+    xuid = table.get("xDataSet")
+    if isinstance(xuid, str) and xuid and "/" not in xuid:  # only a valid uid reserves X
+        x = _read_set(pf, xuid)
         # a missing x file still reserves its column(s): Y headers must not shift
         xfmt = _fmt(x.get("format")) if x is not None else None
         xfmt = xfmt or _fmt(table.get("xDataSetFormat"))

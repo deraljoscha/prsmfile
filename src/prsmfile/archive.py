@@ -5,7 +5,7 @@ import math
 import re
 import zipfile
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .errors import PrismFormatError
 from .values import letter
@@ -69,6 +69,7 @@ class PrismFile:
         self.path = path
         self.warnings: list[str] = []
         self._analyses: list[Analysis] | None = None
+        self._view_ids: frozenset[str] | None = None
         try:
             self._zip = zipfile.ZipFile(path)
         except zipfile.BadZipFile:
@@ -118,15 +119,19 @@ class PrismFile:
     def close(self) -> None:
         self._zip.close()
 
+    def _warn(self, msg: str) -> None:
+        if msg not in self.warnings:  # members may be read by several indexes
+            self.warnings.append(msg)
+
     def read_text(self, name: str) -> str | None:
         if _is_opaque(name) or name not in self._names:
             return None
         try:
             return self._zip.read(name).decode("utf-8")
         except UnicodeDecodeError:
-            self.warnings.append(f"Could not decode {name}")
+            self._warn(f"Could not decode {name}")
         except _READ_ERRORS:
-            self.warnings.append(f"Could not read {name}")
+            self._warn(f"Could not read {name}")
         return None
 
     def read_json(self, name: str) -> dict | None:
@@ -136,10 +141,10 @@ class PrismFile:
         try:
             obj = json.loads(text)
         except _JSON_ERRORS:
-            self.warnings.append(f"Could not parse {name}")
+            self._warn(f"Could not parse {name}")
             return None
         if not isinstance(obj, dict):
-            self.warnings.append(f"{name} is not a JSON object")
+            self._warn(f"{name} is not a JSON object")
             return None
         return obj
 
@@ -157,17 +162,40 @@ class PrismFile:
         """The data table behind a view's result sheet id, or None."""
         from .tables import read_table
 
-        if sheet_id not in self._view_sheet_ids():
+        if not isinstance(sheet_id, str) or sheet_id not in self._view_sheet_ids():
             return None
         return read_table(self, sheet_id)
 
-    def _view_sheet_ids(self) -> set[str]:
-        return {ds for a in self.analyses() for _, ds in a.views if ds is not None}
+    def _view_sheet_ids(self) -> frozenset[str]:
+        """Data-sheet ids of all result views, indexed once from sheet.json
+        resultSheets and the result_sheets members (no parameters or results)."""
+        if self._view_ids is None:
+            ids: set[str] = set()
+            for n in sorted(self._names):
+                m = _SHEET_RE.fullmatch(n)
+                if not m:
+                    continue
+                sheet = self.read_json(n)
+                refs = sheet.get("resultSheets") if sheet else None
+                for r in refs if isinstance(refs, list) else []:
+                    uid = r.get("uid") if isinstance(r, dict) else None
+                    if not isinstance(uid, str) or "/" in uid:
+                        continue
+                    v = self.read_json(f"analyses/{m.group(1)}/result_sheets/{uid}.json")
+                    ds = v.get("dataSheet") if v else None
+                    if isinstance(ds, str):
+                        ids.add(ds)
+            self._view_ids = frozenset(ids)
+        return self._view_ids
 
     def analyses(self) -> list[Analysis]:
         if self._analyses is None:
             self._analyses = self._discover()
-        return list(self._analyses)
+        # copies of the mutable lists: callers cannot change the cached state
+        return [
+            replace(a, inputs=list(a.inputs), views=list(a.views), alerts=list(a.alerts))
+            for a in self._analyses
+        ]
 
     def _discover(self) -> list[Analysis]:
         ids = []

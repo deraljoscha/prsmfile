@@ -156,3 +156,19 @@ def test_explicit_uid_from_result_view_adds_its_sheet(tmp_path):
                         inputs=[("A", "c", b.data_sets(result_sheet)[0])])
     m = members(b.save(tmp_path / "y.prism"))
     assert js(m, f"analyses/{a2}/sheet.json")["inputSheets"] == [{"uid": result_sheet, "title": "First:V"}]
+
+
+def test_csv_single_empty_field_round_trips(tmp_path):
+    import csv, io
+    from tests.builder import PrismBuilder
+    assert PrismBuilder._csv([[""]]) == b'""\n'
+    for rows in ([[""]], [["a"], [""], ["b"]], [["", ""]]):
+        text = PrismBuilder._csv(rows).decode()
+        assert list(csv.reader(io.StringIO(text, newline=""), strict=True)) == rows
+
+
+def test_analysis_links_raw_sheet_with_empty_title(tmp_path):
+    from tests.builder import PrismBuilder
+    b = PrismBuilder()
+    b.add_raw_table("", "column", [("A", "y_single", 1)], [["1"]])
+    b.add_analysis("An", "ONE_WAY_ANOVA", {}, None, inputs=[("A", "A")])
