@@ -73,7 +73,7 @@ class PrismBuilder:
         self._members[f"data/tables/{t}/content.json"] = self._dump(
             {"numberOfColumns": width, "numberOfRows": len(rows), "version": 1}
         )
-        self._members[f"data/tables/{t}/data.dt"] = uuid.uuid4().hex.encode()
+        self._members[f"data/tables/{t}/data.dt"] = uuid.uuid5(uuid.NAMESPACE_OID, f"dt-{t}").hex.encode()
         return t
 
     def _write_set(self, title, fmt: str, width: int, extra: dict | None = None) -> str:
@@ -242,9 +242,9 @@ class PrismBuilder:
             self._titles[aid] = title
         return aid
 
-    def save(self, path, format_version="1-6-1", prism_version="11.1.0.224") -> Path:
+    def save(self, path, format_version="1-6-1", prism_version="11.1.0.224", user="tester") -> Path:
         path = Path(path)
-        who = {"name": "Prism", "user": "tester", "version": prism_version, "platform": "Win"}
+        who = {"name": "Prism", "user": user, "version": prism_version, "platform": "Win"}
         doc = {
             "@class": "Document",
             "formatVersion": format_version,
@@ -255,7 +255,9 @@ class PrismBuilder:
             "sheetAttributesMap": {k: {"title": v} for k, v in self._titles.items()},
         }
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("document.json", self._dump(doc))
-            for name, data in self._members.items():
-                z.writestr(name, data)
+            for name, data in [("document.json", self._dump(doc)), *self._members.items()]:
+                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))  # fixed: same bytes every run
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o644 << 16
+                z.writestr(info, data)
         return path

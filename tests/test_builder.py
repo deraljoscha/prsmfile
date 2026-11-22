@@ -172,3 +172,23 @@ def test_analysis_links_raw_sheet_with_empty_title(tmp_path):
     b = PrismBuilder()
     b.add_raw_table("", "column", [("A", "y_single", 1)], [["1"]])
     b.add_analysis("An", "ONE_WAY_ANOVA", {}, None, inputs=[("A", "A")])
+
+
+def test_save_is_deterministic_and_user_is_settable(tmp_path):
+    import hashlib
+
+    import prsmfile
+
+    def build(path):
+        b = PrismBuilder()
+        b.add_raw_table("T", "column", [("A", "y_single", 1)], [["1"], ["2"]])
+        return b.save(path, user="someone")
+
+    p1, p2 = build(tmp_path / "a.prism"), build(tmp_path / "b.prism")
+    assert hashlib.sha256(p1.read_bytes()).hexdigest() == hashlib.sha256(p2.read_bytes()).hexdigest()
+    import json
+    import zipfile
+    with zipfile.ZipFile(p1) as z:
+        doc = json.loads(z.read("document.json"))
+        assert all(i.date_time == (1980, 1, 1, 0, 0, 0) for i in z.infolist())
+    assert doc["createdBy"]["user"] == doc["modifiedBy"]["user"] == "someone"
