@@ -302,3 +302,15 @@ def test_deep_list_id_does_not_recurse():
     assert len(entries(coll)) == 1
     rows = flatten({"x": coll})
     assert len(rows) == 1 and rows[0][1] == 1.0
+
+
+def test_to_dict_nonfinite_is_none():
+    import math
+    from prsmfile.archive import Analysis
+    a = Analysis(id="x", title="t", analysis_class="C", is_calculated=True)
+    s = Section("S", ["a", "b", "c", "d"], [[math.inf, -math.inf, math.nan, PValue(math.inf, math.nan, True, False)]])
+    d = Report(a, "structured", [s], []).to_dict()
+    json.dumps(d, allow_nan=False)
+    row = d["sections"][0]["rows"][0]
+    assert row[:3] == [None, None, None]
+    assert row[3] == {"p": None, "bound": False, "significant": True, "alpha": None}

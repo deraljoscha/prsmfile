@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Union
 
@@ -31,10 +32,22 @@ class Section:
     note: str | None = None
 
 
+def _finite(x):
+    """Non-finite floats (inf, nan) are not valid JSON: they become None."""
+    if isinstance(x, float) and not math.isfinite(x):
+        return None
+    return x
+
+
 def _cell(c: Cell):
     if isinstance(c, PValue):
-        return {"p": c.value, "bound": c.bound, "significant": c.significant, "alpha": c.alpha}
-    return c
+        return {
+            "p": _finite(c.value),
+            "bound": c.bound,
+            "significant": c.significant,
+            "alpha": _finite(c.alpha),
+        }
+    return _finite(c)
 
 
 @dataclass
