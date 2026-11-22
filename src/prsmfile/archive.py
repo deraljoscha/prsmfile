@@ -23,6 +23,32 @@ _READ_ERRORS = (
 )
 _JSON_ERRORS = (ValueError, RecursionError)
 
+# Limits against zip bombs and oversized members. Real Prism files store members
+# (compression ratio 1) and stay far below these values.
+MAX_MEMBERS = 100_000  # number of entries in the archive
+MAX_MEMBER_SIZE = 512 * 1024 * 1024  # bytes of one member read into memory
+MAX_TOTAL_SIZE = 4 * 1024 * 1024 * 1024  # bytes across all members read from one file
+MAX_RATIO = 200  # uncompressed / compressed size of one member ...
+RATIO_MIN_SIZE = 10 * 1024 * 1024  # ... only checked for members larger than this
+_CHUNK = 1024 * 1024
+
+
+def _read_bounded(fp, name: str, limit: int) -> bytes:
+    """Read a stream to the end, raising PrismFormatError once it exceeds limit
+    bytes. Never trusts a size from the archive header."""
+    parts: list[bytes] = []
+    got = 0
+    while True:
+        chunk = fp.read(min(_CHUNK, limit + 1 - got))
+        if not chunk:
+            return b"".join(parts)
+        got += len(chunk)
+        if got > limit:
+            raise PrismFormatError(
+                f"{name}: member larger than the limit of {limit} bytes (MAX_MEMBER_SIZE)"
+            )
+        parts.append(chunk)
+
 
 def _is_opaque(name: str) -> bool:
     """Members that are never read: media, binary graph and layout data."""
@@ -94,6 +120,7 @@ class PrismFile:
         self.warnings: list[str] = []
         self._analyses: list[Analysis] | None = None
         self._view_ids: frozenset[str] | None = None
+        self._total_read = 0
         try:
             self._zip = zipfile.ZipFile(path)
         except zipfile.BadZipFile:
@@ -103,11 +130,16 @@ class PrismFile:
         except (UnicodeDecodeError, NotImplementedError, EOFError, zlib.error, RuntimeError) as e:
             raise PrismFormatError(f"{path}: unsupported or damaged zip archive ({e})") from None
         try:
+            n_members = len(self._zip.infolist())
+            if n_members > MAX_MEMBERS:
+                raise PrismFormatError(
+                    f"{path}: {n_members} members exceed the limit of {MAX_MEMBERS} (MAX_MEMBERS)"
+                )
             self._names = set(self._zip.namelist())
             if "document.json" not in self._names:
                 raise PrismFormatError(f"{path}: document.json missing (not a .prism file)")
             try:
-                raw = self._zip.read("document.json")
+                raw = self._read_member("document.json")
                 doc = json.loads(raw.decode("utf-8"))
             except _READ_ERRORS + _JSON_ERRORS as e:
                 raise PrismFormatError(f"{path}: document.json unreadable ({e})") from None
@@ -144,11 +176,37 @@ class PrismFile:
         if msg not in self.warnings:  # members may be read by several indexes
             self.warnings.append(msg)
 
+    def _read_member(self, name: str) -> bytes:
+        """Bytes of a member, within MAX_MEMBER_SIZE, MAX_RATIO and MAX_TOTAL_SIZE."""
+        info = self._zip.getinfo(name)
+        if info.file_size > MAX_MEMBER_SIZE:
+            raise PrismFormatError(
+                f"{name}: member size {info.file_size} exceeds the limit of "
+                f"{MAX_MEMBER_SIZE} bytes (MAX_MEMBER_SIZE)"
+            )
+        if info.file_size > RATIO_MIN_SIZE and info.file_size > MAX_RATIO * info.compress_size:
+            raise PrismFormatError(
+                f"{name}: compression ratio exceeds the limit of {MAX_RATIO} (MAX_RATIO)"
+            )
+        room = MAX_TOTAL_SIZE - self._total_read
+        with self._zip.open(info) as fp:
+            try:
+                data = _read_bounded(fp, name, min(MAX_MEMBER_SIZE, room))
+            except PrismFormatError:
+                if room < MAX_MEMBER_SIZE:
+                    raise PrismFormatError(
+                        f"{name}: total size read exceeds the limit of "
+                        f"{MAX_TOTAL_SIZE} bytes (MAX_TOTAL_SIZE)"
+                    ) from None
+                raise
+        self._total_read += len(data)
+        return data
+
     def read_text(self, name: str) -> str | None:
         if _is_opaque(name) or name not in self._names:
             return None
         try:
-            return self._zip.read(name).decode("utf-8")
+            return self._read_member(name).decode("utf-8")
         except UnicodeDecodeError:
             self._warn(f"Could not decode {name}")
         except _READ_ERRORS:

@@ -6,6 +6,10 @@ Breaking changes in 0.x releases are listed here.
 
 ## [Unreleased]
 
+### Security
+
+- Archive reading is bounded against zip bombs and oversized members: at most 100,000 members, 512 MiB per member read, 4 GiB in total per file, and a compression ratio of at most 200 for members above 10 MiB. Members are read through a bounded reader, so a false size in the archive header cannot bypass the limits. A violation raises `PrismFormatError` naming the member and the limit (CLI exit 1).
+
 ## [0.1.0] - 2026-11-22
 
 ### Added

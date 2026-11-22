@@ -465,3 +465,86 @@ def test_mutating_returned_dicts_does_not_change_the_cache(tmp_path):
         again = pf.analyses()[0]
     assert again.results == {"k": {"v": [1, 2]}}
     assert again.parameters == {"x": {"y": 1}}
+
+
+# ---- zip bomb and size limits ----
+
+import io
+
+from prsmfile import archive as _archive
+
+
+def _mem_zip(tmp_path, members, compress=zipfile.ZIP_STORED):
+    p = tmp_path / "m.prism"
+    with zipfile.ZipFile(p, "w", compress) as z:
+        z.writestr("document.json", '{"formatVersion": "1-0"}')
+        for n, data in members.items():
+            z.writestr(n, data)
+    return p
+
+
+def test_too_many_members(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "MAX_MEMBERS", 5)
+    p = _mem_zip(tmp_path, {f"x/{i}.json": "{}" for i in range(10)})
+    with pytest.raises(PrismFormatError) as e:
+        prsmfile.open(p)
+    assert "MAX_MEMBERS" in str(e.value)
+
+
+def test_oversized_member_header_honest(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "MAX_MEMBER_SIZE", 1000)
+    p = _mem_zip(tmp_path, {"big.json": '{"a": "' + "x" * 2000 + '"}'})
+    with prsmfile.open(p) as pf:
+        with pytest.raises(PrismFormatError) as e:
+            pf.read_text("big.json")
+    assert "big.json" in str(e.value) and "MAX_MEMBER_SIZE" in str(e.value)
+
+
+def test_bounded_reader_ignores_lying_size():
+    # the stream is longer than any header would say: only the real bytes count
+    with pytest.raises(PrismFormatError) as e:
+        _archive._read_bounded(io.BytesIO(b"x" * 5000), "liar.json", 1000)
+    assert "liar.json" in str(e.value)
+    assert _archive._read_bounded(io.BytesIO(b"x" * 1000), "ok.json", 1000) == b"x" * 1000
+
+
+def test_high_ratio_member(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "RATIO_MIN_SIZE", 1000)
+    monkeypatch.setattr(_archive, "MAX_RATIO", 10)
+    p = _mem_zip(tmp_path, {"bomb.json": "0" * 100_000}, zipfile.ZIP_DEFLATED)
+    with prsmfile.open(p) as pf:
+        with pytest.raises(PrismFormatError) as e:
+            pf.read_text("bomb.json")
+    assert "bomb.json" in str(e.value) and "MAX_RATIO" in str(e.value)
+
+
+def test_ratio_not_checked_below_threshold(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "MAX_RATIO", 2)
+    p = _mem_zip(tmp_path, {"small.json": "0" * 100_000}, zipfile.ZIP_DEFLATED)
+    with prsmfile.open(p) as pf:  # default RATIO_MIN_SIZE: 10 MiB
+        assert len(pf.read_text("small.json")) == 100_000
+
+
+def test_total_size_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", 3000)
+    p = _mem_zip(tmp_path, {"a.json": " " * 1500, "b.json": " " * 1500})
+    with prsmfile.open(p) as pf:
+        pf.read_text("a.json")
+        with pytest.raises(PrismFormatError) as e:
+            pf.read_text("b.json")
+    assert "MAX_TOTAL_SIZE" in str(e.value)
+
+
+def test_normal_file_within_limits(tmp_path):
+    p = _mem_zip(tmp_path, {"a.json": '{"k": 1}'})
+    with prsmfile.open(p) as pf:
+        assert pf.read_json("a.json") == {"k": 1}
+
+
+def test_cli_oversized_document_exit_1(tmp_path, monkeypatch, capsys):
+    from prsmfile import cli
+
+    monkeypatch.setattr(_archive, "MAX_MEMBER_SIZE", 10)
+    p = _mem_zip(tmp_path, {})
+    assert cli.main([str(p), "--list"]) == 1
+    assert "MAX_MEMBER_SIZE" in capsys.readouterr().err

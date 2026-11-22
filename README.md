@@ -153,6 +153,9 @@ so nothing is dropped silently.
   terminal, so such columns look misaligned. JSON and CSV output are not affected.
 - `.pzf` files (Prism's other file format) are not supported. Save the project as `.prism`.
 - Graphs, layouts and embedded media are not read.
+- Archives are read with size limits against zip bombs (100,000 members, 512 MiB per member,
+  4 GiB in total, compression ratio 200 above 10 MiB). Real Prism files stay far below them. A
+  file over a limit is rejected with an error naming the member.
 - Only the five structured families above get dedicated readers; other analyses are generic.
 - For unpaired tests, the stored `swapDirection` flag is not trusted. The direction of a
   difference is derived from the stored means.
