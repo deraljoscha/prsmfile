@@ -4,7 +4,8 @@ from prsmfile.values import PValue, ci, dataset_title, entries, label, letter, n
 
 
 def test_num():
-    assert num(3) == 3.0 and isinstance(num(3), float)
+    assert num(3) == 3 and isinstance(num(3), int) and not isinstance(num(3), bool)
+    assert isinstance(num(3.0), float)
     assert num(2.5) == 2.5
     assert num("undefined") is None
     assert num(None) is None

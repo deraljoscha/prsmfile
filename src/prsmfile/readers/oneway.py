@@ -8,13 +8,19 @@ from .common import (
     anova_columns,
     anova_row,
     comparisons_section,
+    data_summary_section,
     descriptive_section,
+    letters_leftovers,
     letters_section,
+    other_rows,
+    other_section,
     parameters_section,
 )
 
 _MODELS = ("ordinaryAnovaModel", "repeatedMeasuresGlmAnovaModel")
 _ASSUMPTION_COLUMNS = ["Test", "Statistic", "DFn", "DFd", "P", "Status"]
+_MODEL_KEYS = ("anovaTable", "brownForsytheTest", "bartlettTest", "multipleComparisons",
+               "compactLetterDisplay", "matchingTest", "dataSummary")
 
 
 def _dict(x) -> dict:
@@ -37,6 +43,15 @@ def _assumption_rows(model: dict) -> list[list]:
         rows.append(["Bartlett's test", num(bt.get("statistic")), None, None,
                      PValue.from_obj(bt.get("pValue")), _str(bt.get("status"))])
     return rows
+
+
+def _matching_test(test) -> Section | None:
+    t = _dict(test)
+    row = [num(t.get("f")), num(t.get("dfNumerator")), num(t.get("dfDenominator")),
+           PValue.from_obj(t.get("pValue"))]
+    if all(c is None or (isinstance(c, PValue) and c.value is None) for c in row):
+        return None
+    return Section("Matching test", ["F", "DFn", "DFd", "P"], [row])
 
 
 def _per_family(mc: dict):
@@ -70,14 +85,18 @@ def read_oneway(pf, a, warn):
         sections.append(parameters)
     table = _dict(model.get("anovaTable"))
     if table:
-        rows = [anova_row("Treatment", table["colFactor"], False)] if "colFactor" in table else []
+        eps = any("ggEpsilon" in v for v in table.values() if isinstance(v, dict))
+        rows = [anova_row("Treatment", table["colFactor"], False, eps)] if "colFactor" in table else []
         if "matchedFactor" in table:
-            rows.append(anova_row("Matching", table["matchedFactor"], False))
+            rows.append(anova_row("Matching", table["matchedFactor"], False, eps))
         for key, name in (("residual", "Residual"), ("total", "Total")):
             if key in table:
-                rows.append(anova_row(name, table[key], False))
+                rows.append(anova_row(name, table[key], False, eps))
         if rows:
-            sections.append(Section("ANOVA", anova_columns(False), rows))
+            sections.append(Section("ANOVA", anova_columns(False, eps), rows))
+    matching = _matching_test(model.get("matchingTest"))
+    if matching is not None:
+        sections.append(matching)
     assumptions = _assumption_rows(model)
     if assumptions:
         sections.append(Section("Assumption tests", list(_ASSUMPTION_COLUMNS), assumptions))
@@ -90,4 +109,13 @@ def read_oneway(pf, a, warn):
     desc = descriptive_section(results.get("descriptiveStatistics"))
     if desc.rows:
         sections.append(desc)
+    summary = data_summary_section(model.get("dataSummary"))
+    if summary is not None:
+        sections.append(summary)
+    other = other_rows(results, ("descriptiveStatistics", found[0]))
+    other += other_rows(model, _MODEL_KEYS)
+    other += letters_leftovers(model.get("compactLetterDisplay"))
+    extra = other_section(other)
+    if extra is not None:
+        sections.append(extra)
     return sections

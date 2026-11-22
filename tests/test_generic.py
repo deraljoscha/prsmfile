@@ -185,7 +185,7 @@ def test_alerts_in_warnings(tmp_path):
     res = {"status": {"error": "VALID", "warning": ["INCOMPLETE_CI"]}, "v": 1}
     r = run(tmp_path, lambda b: b.add_analysis("A", "CORRELATION", {}, res, alert="Careful", auto_note="Note two"))
     assert r.warnings[:2] == ["Careful", "Note two"]
-    assert "INCOMPLETE_CI" in r.warnings
+    assert "Prism reported INCOMPLETE_CI" in r.warnings
 
 
 def test_alerts_come_first_even_when_not_calculated(tmp_path):
@@ -288,7 +288,7 @@ def test_numbers_via_num(tmp_path):
     res = {**OK, "i": 3, "big": 10**400, "f": 2.5, "t": True}
     r = run(tmp_path, lambda b: b.add_analysis("A", "CORRELATION", {}, res))
     rows = dict((p, v) for p, v in r.sections[0].rows)
-    assert rows["i"] == 3.0 and isinstance(rows["i"], float)
+    assert rows["i"] == 3 and isinstance(rows["i"], int)
     assert rows["big"] is None and rows["f"] == 2.5 and rows["t"] is True
 
 

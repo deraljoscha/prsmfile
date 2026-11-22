@@ -9,7 +9,8 @@ _P_KEYS = ("value", "level", "isSignificant", "state")
 
 
 def _is_p(node) -> bool:
-    return isinstance(node, dict) and "value" in node and "state" in node
+    """A stored p-value: `value` next to `state` or `isSignificant` (the latter alone also occurs)."""
+    return isinstance(node, dict) and "value" in node and ("state" in node or "isSignificant" in node)
 
 
 def _is_collection(node) -> bool:

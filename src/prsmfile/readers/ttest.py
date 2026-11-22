@@ -8,6 +8,10 @@ from .common import (
     _tol,
     derive_direction,
     descriptive_section,
+    letters_leftovers,
+    letters_section,
+    other_rows,
+    other_section,
     parameters_section,
 )
 from ..report import Section
@@ -20,7 +24,14 @@ _MODELS = {
     "WILCOXON_TEST": "wilcoxonTestModel",
 }
 _TAILS = {"P_VALUE_TWO_TAILED": "two", "P_VALUE_ONE_TAILED": "one"}
-_TEST_COLUMNS = ["Test", "Statistic", "Value", "df", "P"]
+_TEST_COLUMNS = ["Test", "Statistic name", "Statistic", "df", "DFn", "DFd", "P"]
+_TEST_KEYS = {
+    "welchTTestModel": ("welchTTest", "varianceTest", "differenceOfMeans"),
+    "unpairedTTestModel": ("unpairedTTest", "varianceTest", "differenceOfMeans"),
+    "pairedTTestModel": ("pairedTTest", "meanOfDifferences"),
+    "mannWhitneyTestModel": ("mannWhitneyTest", "differenceOfMedians"),
+    "wilcoxonTestModel": ("wilcoxonTest", "medianOfDifferences"),
+}
 _VARIANCE = "F test to compare variances"
 
 
@@ -118,10 +129,9 @@ def _variance_row(model: dict, warn):
     f = num(vt.get("f"))
     if f is None:
         warn(f"{_VARIANCE}: {vt.get('status')}")
-        return [_VARIANCE, "F", None, None, None]
-    dfn, dfd = num(vt.get("dfNumerator")), num(vt.get("dfDenominator"))
-    df = f"{dfn:g}, {dfd:g}" if dfn is not None and dfd is not None else None
-    return [_VARIANCE, "F", f, df, _p(vt.get("pValue"))]
+        return [_VARIANCE, "F", None, None, None, None, None]
+    return [_VARIANCE, "F", f, None, num(vt.get("dfNumerator")), num(vt.get("dfDenominator")),
+            _p(vt.get("pValue"))]
 
 
 def _effect_two_means(a, model, stats, warn) -> Section:
@@ -184,7 +194,7 @@ def _effect_wilcoxon(model, stats, warn) -> Section:
     s1 = num(_dict(_dict(_dict(stats).get("sample1")).get("value")).get("mean"))
     s2 = num(_dict(_dict(_dict(stats).get("sample2")).get("value")).get("mean"))
     if dm is not None and s1 is not None and s2 is not None and abs(dm - (s1 - s2)) > _tol(dm, s1, s2):
-        warn("Wilcoxon difference order unverified.")
+        warn("Direction of difference could not be verified.")
     return Section("Effect", ["Median of differences", "Difference is"], [[median, direction]])
 
 
@@ -194,7 +204,7 @@ def _has_number(row) -> bool:
 
 def _test_row(block, name, stat, stat_key):
     b = _dict(block)
-    row = [name, stat, num(b.get(stat_key)), num(b.get("df")), _p(b.get("pValue"))]
+    row = [name, stat, num(b.get(stat_key)), num(b.get("df")), None, None, _p(b.get("pValue"))]
     return row if _has_number(row[2:]) else None
 
 
@@ -238,14 +248,14 @@ def read_ttest(pf, a, warn):
             effect = _effect_paired(model, stats, warn)
     elif key == "mannWhitneyTestModel":
         b = _dict(model.get("mannWhitneyTest"))
-        row = ["Mann-Whitney test", "U", num(b.get("U")), None, _p(b.get("pValue"))]
+        row = ["Mann-Whitney test", "U", num(b.get("U")), None, None, None, _p(b.get("pValue"))]
         if _has_number(row[2:]):
             test_rows.append(row)
         if _dict(model.get("differenceOfMedians")):
             effect = _effect_mann_whitney(a, model, stats, warn)
     else:
         b = _dict(model.get("wilcoxonTest"))
-        row = ["Wilcoxon signed-rank test", "W", num(b.get("signedRanksSum")), None,
+        row = ["Wilcoxon signed-rank test", "W", num(b.get("signedRanksSum")), None, None, None,
                _p(b.get("pValue"))]
         if _has_number(row[2:]):
             test_rows.append(row)
@@ -260,4 +270,13 @@ def read_ttest(pf, a, warn):
     desc = descriptive_section(stats)
     if desc.rows:
         sections.append(desc)
+    letters = letters_section(results.get("compactLetterDisplay"))
+    if letters is not None:
+        sections.append(letters)
+    other = other_rows(results, ("descriptiveStatistics", "compactLetterDisplay", key))
+    other += other_rows(model, _TEST_KEYS[key])
+    other += letters_leftovers(results.get("compactLetterDisplay"))
+    extra = other_section(other)
+    if extra is not None:
+        sections.append(extra)
     return sections

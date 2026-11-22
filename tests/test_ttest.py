@@ -77,9 +77,9 @@ def test_welch_labels_and_direction(tmp_path):
     assert [s.title for s in r.sections] == ["Parameters", "Test", "Effect", "Descriptive statistics"]
     assert sec(r, "Parameters").rows == [["Design", "WELCH_T_TEST"], ["Tails", "two"], ["Swap direction", True]]
     t = sec(r, "Test")
-    assert t.columns == ["Test", "Statistic", "Value", "df", "P"]
-    assert t.rows[0][:4] == ["Welch's t test", "t", 2.5, 17.0] and isinstance(t.rows[0][4], PValue)
-    assert t.rows[1][:4] == ["F test to compare variances", "F", 1.5, "11, 9"]
+    assert t.columns == ["Test", "Statistic name", "Statistic", "df", "DFn", "DFd", "P"]
+    assert t.rows[0][:6] == ["Welch's t test", "t", 2.5, 17.0, None, None] and isinstance(t.rows[0][6], PValue)
+    assert t.rows[1][:6] == ["F test to compare variances", "F", 1.5, None, 11.0, 9.0]
     e = sec(r, "Effect")
     assert e.columns == ["Group 1", "Mean 1", "n 1", "Group 2", "Mean 2", "n 2", "Difference",
                          "Difference is", "SE", "CI lower", "CI upper", "CI level", "R squared"]
@@ -223,14 +223,14 @@ def test_wilcoxon_order(tmp_path):
 
 def test_wilcoxon_order_unverified(tmp_path):
     r = run(tmp_path, wilcoxon_results([(1, "x"), (0, "y")], diff_mean=-3.0), {"experimentalDesign": "WILCOXON_TEST"})
-    assert "Wilcoxon difference order unverified." in r.warnings
+    assert DIRW in r.warnings
 
 
 def test_variance_status_only(tmp_path):
     res = welch_results(5.0, 7.0, 2.0, variance={"status": "SD_ZERO"})
     r = run(tmp_path, res)
     t = sec(r, "Test")
-    assert t.rows[1] == ["F test to compare variances", "F", None, None, None]
+    assert t.rows[1] == ["F test to compare variances", "F", None, None, None, None, None]
     assert "F test to compare variances: SD_ZERO" in r.warnings
 
 
@@ -375,7 +375,7 @@ def test_wilcoxon_without_median_keeps_direction_and_check(tmp_path):
     del res["wilcoxonTestModel"]["medianOfDifferences"]
     r = run(tmp_path, res, {"experimentalDesign": "WILCOXON_TEST"})
     assert sec(r, "Effect").rows == [[None, "B:x - A:y"]]
-    assert "Wilcoxon difference order unverified." in r.warnings
+    assert DIRW in r.warnings
 
 
 def test_non_dict_model_falls_back(tmp_path):

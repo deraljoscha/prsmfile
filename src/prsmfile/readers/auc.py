@@ -6,6 +6,7 @@ import re
 from ..report import Section
 from ..values import entries, num
 from . import register
+from .common import other_rows, other_section
 from .nonlinear import dataset_label
 
 _SUMMARY_COLUMNS = ["Data set", "Baseline", "Total area", "Total peak area", "Peaks"]
@@ -45,4 +46,7 @@ def read_auc(pf, a, warn):
         sections.append(Section("Area under curve", list(_SUMMARY_COLUMNS), summary_rows))
     if peak_rows:
         sections.append(Section("Peaks", list(_PEAK_COLUMNS), peak_rows))
+    extra = other_section(other_rows(a.results, ("samples",)))
+    if extra is not None:
+        sections.append(extra)
     return sections

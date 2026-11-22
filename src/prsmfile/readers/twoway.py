@@ -8,11 +8,14 @@ from .common import (
     anova_columns,
     anova_row,
     comparisons_section,
+    data_summary_section,
     family_rows,
+    letters_leftovers,
     letters_section,
+    other_rows,
+    other_section,
     parameters_section,
 )
-from .generic import flatten
 
 _MODELS = ("ordinaryAnovaModel", "repeatedMeasuresGlmAnovaModel", "repeatedMeasuresRemlAnovaModel")
 _GLM = "repeatedMeasuresGlmAnovaModel"
@@ -30,7 +33,7 @@ _ANOVA_ROWS = (
 _FIXED_ROWS = (("rowFactor", "Row factor"), ("colFactor", "Column factor"),
                ("rowFactorVsColFactor", "Interaction"))
 _RANDOM_NAMES = {"matchedFactor": "Subject", "residual": "Residual"}
-_OTHER_KEYS = ("differenceBetweenRowMeans", "differenceBetweenColMeans", "interaction", "means")
+_COMMON_KEYS = ("factorNames", "multipleComparisons", "compactLetterDisplay", "dataSummary")
 
 
 def _dict(x) -> dict:
@@ -81,13 +84,6 @@ def _matching_section(test) -> Section | None:
     return Section("Matching", ["Chi-square", "df", "P"], [row])
 
 
-def _data_summary(summary) -> Section | None:
-    rows: list[list[Cell]] = []
-    for k, v in _dict(summary).items():
-        rows.append([str(k), v if isinstance(v, bool) else num(v)])
-    return Section("Data summary", ["Name", "Value"], rows) if rows else None
-
-
 @register("TWO_WAY_ANOVA")
 def read_twoway(pf, a, warn):
     results = a.results
@@ -132,14 +128,15 @@ def read_twoway(pf, a, warn):
     letters = letters_section(model.get("compactLetterDisplay"))
     if letters is not None:
         sections.append(letters)
-    summary = _data_summary(model.get("dataSummary"))
+    summary = data_summary_section(model.get("dataSummary"))
     if summary is not None:
         sections.append(summary)
-    other_keys = _OTHER_KEYS if key == _REML else _OTHER_KEYS + ("randomEffects",)
-    other: list[list[Cell]] = []
-    for k in other_keys:
-        if k in model:
-            other.extend(flatten(model[k], k))
-    if other:
-        sections.append(Section("Other values", ["Path", "Value"], other))
+    consumed = _COMMON_KEYS + (("fixedEffects", "randomEffects", "matchingTest") if key == _REML
+                               else ("anovaTable",))
+    other = other_rows(results, (key,))
+    other += other_rows(model, consumed)
+    other += letters_leftovers(model.get("compactLetterDisplay"))
+    extra = other_section(other)
+    if extra is not None:
+        sections.append(extra)
     return sections

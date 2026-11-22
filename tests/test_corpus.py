@@ -81,7 +81,7 @@ def test_structured_coverage():
         if not any(k in a.results for k in KNOWN_MODEL_KEYS):
             continue
         r = read_analysis(pf, a)
-        if r.kind != "structured":
+        if r.kind != "structured" or not r.sections:
             bad.append((path.name, a.title, a.analysis_class, r.kind, r.warnings))
     assert not bad, bad
 
@@ -154,7 +154,8 @@ def _check_ttest(pf, a, report):
     sec = _section(report, "Test")
     if rows is None or sec is None or not sec.rows:
         return None
-    stat_name, value, _df, pcell = sec.rows[0][1:5]
+    stat_name, value = sec.rows[0][1:3]
+    pcell = sec.rows[0][sec.columns.index("P")]
     p, value = _pvalue(pcell), _num(value)
     if value is None and p is None:
         return None
@@ -176,16 +177,22 @@ def _check_ttest(pf, a, report):
     return out
 
 
+def _effect_cells_ok(cells, f, p) -> bool:
+    """F matches a cell with `=`; the p-value must match another cell (never the F cell itself,
+    whose number would otherwise count as p). Without F, p may match any cell that is not an F cell."""
+    if f is None:
+        pcells = [c for c in cells if "F (" not in c]
+    else:
+        fi = next((i for i, c in enumerate(cells) if "=" in c and _stat_ok(f, c)), None)
+        if fi is None:
+            return False
+        pcells = cells[:fi] + cells[fi + 1:]
+    return p is None or any(_p_ok(p, c) for c in pcells)
+
+
 def _find_effect(rows, label, f, p):
     """True if some rendered row labelled `label` carries both F and p."""
-    for row in rows:
-        if not row or row[0] != label:
-            continue
-        cells = row[1:]
-        if (f is None or any(_stat_ok(f, c) for c in cells if "=" in c)) and \
-           (p is None or any(_p_ok(p, c) for c in cells)):
-            return True
-    return False
+    return any(row and row[0] == label and _effect_cells_ok(row[1:], f, p) for row in rows)
 
 
 def _check_oneway(pf, a, report):
@@ -202,9 +209,7 @@ def _check_oneway(pf, a, report):
     ok = False
     for r in rows:
         if r and r[0].startswith("Treatment"):
-            cells = r[1:]
-            if (f is None or any(_stat_ok(f, c) for c in cells if "=" in c)) and \
-               (p is None or any(_p_ok(p, c) for c in cells)):
+            if _effect_cells_ok(r[1:], f, p):
                 ok = True
     return [] if ok else [f"Treatment F={f} p={p} not in rendered table"]
 

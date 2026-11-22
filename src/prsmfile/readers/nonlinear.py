@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..report import Section
 from ..values import PValue, ci, entries, label, num
 from . import register
-from .common import parameters_section
+from .common import other_rows, other_section, parameters_section
 
 _BEST_COLUMNS = ["Data set", "Model", "Parameter", "Estimate", "SE", "CI lower", "CI upper",
                  "CI level", "Status"]
@@ -113,4 +113,7 @@ def read_nonlinear(pf, a, warn):
     cmp_rows = _comparison_rows(results.get("modelComparison"))
     if cmp_rows:
         sections.append(Section("Model comparison", list(_CMP_COLUMNS), cmp_rows))
+    extra = other_section(other_rows(results, ("models", "dataSummary", "modelComparison")))
+    if extra is not None:
+        sections.append(extra)
     return sections

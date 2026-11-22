@@ -14,15 +14,18 @@ def is_uid(x) -> bool:
     return isinstance(x, str) and _UID_RE.fullmatch(x) is not None
 
 
-def num(x) -> float | None:
-    """Return x as float; bool, strings (e.g. "undefined"), None, inf and nan give None."""
+def num(x) -> int | float | None:
+    """Return x as stored: an int stays an int (exact), a float stays a float. bool, strings
+    (e.g. "undefined"), None, inf, nan and ints beyond float range give None."""
     if isinstance(x, bool) or not isinstance(x, (int, float)):
         return None
     try:
         f = float(x)
     except OverflowError:  # int too large for a float
         return None
-    return f if math.isfinite(f) else None  # inf and nan are not data
+    if not math.isfinite(f):  # inf and nan are not data
+        return None
+    return x
 
 
 @dataclass(frozen=True)

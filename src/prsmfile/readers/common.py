@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from typing import Callable
 
+import re
+
 from ..report import Cell, Section
 from ..values import PValue, ci, entries, label, num
+from .generic import flatten
 
 
 def parameters_section(rows: list[tuple[str, Cell]]) -> Section:
@@ -124,3 +127,59 @@ def letters_section(cld) -> Section | None:
         if isinstance(value, str) and value.strip():
             rows.append([label(id_), value])
     return Section("Compact letter display", ["Cell", "Group"], rows) if rows else None
+
+
+_KNOWN_NAMES = {
+    "rowCount": "Row count", "colCount": "Column count", "pointCount": "Point count",
+    "levelCount": "Level count", "matchedCount": "Matched count", "missingCount": "Missing count",
+    "isBalancedDesign": "Balanced design",
+}
+_WORDS = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def humanise(key) -> str:
+    """A stored camelCase key as words: colCount -> Column count; unknown keys are split at capitals."""
+    key = str(key)
+    if key in _KNOWN_NAMES:
+        return _KNOWN_NAMES[key]
+    words = _WORDS.sub(" ", key).split()
+    if words and words[0] == "is" and len(words) > 1:
+        words = words[1:]
+    text = " ".join(w.lower() for w in words)
+    return text[:1].upper() + text[1:]
+
+
+def data_summary_section(summary) -> Section | None:
+    """The stored dataSummary as Name, Value rows with readable names."""
+    rows: list[list[Cell]] = []
+    for k, v in _dict(summary).items():
+        rows.append([humanise(k), v if isinstance(v, bool) else num(v)])
+    return Section("Data summary", ["Name", "Value"], rows) if rows else None
+
+
+def other_rows(node, consumed) -> list[list[Cell]]:
+    """[path, value] rows of every key of `node` (a results or model dict) that no reader consumed,
+    so a structured report never drops a stored value silently. `status` is skipped when it is only
+    the VALID marker or the results-level status object (reported as warnings)."""
+    rows: list[list[Cell]] = []
+    for k, v in _dict(node).items():
+        if k in consumed:
+            continue
+        if k == "status" and (isinstance(v, dict) or v == "VALID"):
+            continue
+        rows.extend(flatten(v, str(k)))
+    return rows
+
+
+def letters_leftovers(cld) -> list[list[Cell]]:
+    """Rows of a compactLetterDisplay that letters_section does not show (counts, odd layouts)."""
+    if cld is None:
+        return []
+    if letters_section(cld) is None:
+        return flatten(cld, "compactLetterDisplay")
+    rest = {k: v for k, v in _dict(cld).items() if k not in ("samples", "status")}
+    return flatten(rest, "compactLetterDisplay") if rest else []
+
+
+def other_section(rows: list[list[Cell]]) -> Section | None:
+    return Section("Other values", ["Path", "Value"], rows) if rows else None

@@ -161,7 +161,7 @@ def test_other_values_keep_level(tmp_path):
     assert ["randomEffects.matchedFactor.sd", 1.0] in o.rows
     d = sec(r, "Data summary")
     assert d.columns == ["Name", "Value"]
-    assert d.rows == [["rowCount", 2.0], ["colCount", 3.0], ["isBalancedDesign", True]]
+    assert d.rows == [["Row count", 2], ["Column count", 3], ["Balanced design", True]]
 
 
 def test_sphericity_parameter(tmp_path):

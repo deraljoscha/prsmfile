@@ -32,6 +32,10 @@ def _status(a) -> tuple[str | None, list[str]]:
     )
 
 
+def _coded(codes: list[str]) -> list[str]:
+    return [f"Prism reported {c}" for c in codes]
+
+
 def _rendered_sections(pf, a) -> list[Section]:
     out = []
     for name, ds in a.views:
@@ -68,6 +72,7 @@ def read_analysis(pf, a) -> Report:
     if a.results is None or all(k == "status" for k in a.results):
         if a.results is None:
             warn(f"No stored results (file saved by Prism {pf.saved_with or 'unknown'}).")
+        warnings.extend(_coded(codes))
         if err is not None and err != "VALID":
             warn(f"Prism reported {err}")
         return Report(a, "generic", _rendered_sections(pf, a), warnings)
@@ -78,13 +83,13 @@ def read_analysis(pf, a) -> Report:
         reader = REGISTRY.get(a.analysis_class)
         if reader is not None:
             try:
-                sections = reader(pf, a, warn)
-                kind = "structured"
+                sections = reader(pf, a, warn) or None  # no section at all: use the generic reader
+                kind = "structured" if sections else "generic"
             except _READER_ERRORS as e:
                 warn(f"Structured reader failed ({type(e).__name__}), showing generic values.")
         if sections is None:
             sections = generic_sections(pf, a)
-    warnings.extend(codes)
+    warnings.extend(_coded(codes))
     if err is not None and err != "VALID":
         warn(f"Prism reported {err}")
     return Report(a, kind, sections, warnings)
