@@ -175,3 +175,81 @@ def test_corpus_effect_check_does_not_take_f_cell_as_p():
     assert not _effect_cells_ok(cells, 0.04, 0.04)  # 0.04 as p would only match the F cell
     assert _effect_cells_ok(cells, None, 0.85)
     assert not _effect_cells_ok(cells, None, 0.04)
+
+
+# ---- final review round ----
+
+def _cli(argv, capsys):
+    from prsmfile.cli import main
+    code = main([str(a) for a in argv])
+    out = capsys.readouterr()
+    return code, out.out, out.err
+
+
+def _two(tmp_path, title2="Second R²"):
+    b = PrismBuilder()
+    b.add_analysis("First", "ONE_WAY_ANOVA", {}, {"x": 1, "status": OK})
+    b.add_analysis(title2, "ONE_WAY_ANOVA", {}, {"x": 1, "status": OK})
+    return b.save(tmp_path / "two.prism")
+
+
+def test_analysis_number_only_ascii_digits(tmp_path, capsys):
+    p = _two(tmp_path)
+    for needle in ("²", "٣", "٢"):  # superscript two, arabic-indic three and two
+        code, out, err = _cli([p, "--list", "--analysis", needle], capsys)
+        if needle == "²":
+            assert code == 0 and out.startswith("02  ")  # title search finds "R²"
+        else:
+            assert code == 1 and "no analysis matches" in err
+    code, out, _ = _cli([p, "--list", "--analysis", "2"], capsys)
+    assert code == 0 and out.startswith("02  ")
+
+
+def test_nlr_covariance_is_listed(tmp_path):
+    m = test_nonlinear.fit({"Bottom": test_nonlinear.par(1.0)})
+    m["covariance"] = {"Bottom": {"Bottom": 0.25}}
+    r = test_nonlinear.run(tmp_path, test_nonlinear.res([(test_nonlinear.mid(0, "A"), m)],
+                                                       [test_nonlinear.summary(0, "A")]))
+    other = sec(r, "Other values")
+    assert any("covariance" in p and "Bottom" in p for p in paths(other))
+    assert not any(p.endswith(".estimate") or p.endswith(".se") for p in paths(other))
+
+
+def test_mann_whitney_exact_and_approximate_p_are_listed(tmp_path):
+    res = test_ttest.mw_results()
+    mw = res["mannWhitneyTestModel"]["mannWhitneyTest"]
+    mw["pValueExact"] = test_ttest.pobj(0.031)
+    mw["pValueApproximate"] = test_ttest.pobj(0.044)
+    r = test_ttest.run(tmp_path, res, {"experimentalDesign": "MANN_WHITNEY_TEST"})
+    p = paths(sec(r, "Other values"))
+    assert "mannWhitneyTestModel.mannWhitneyTest.pValueExact" in p or \
+        "mannWhitneyTest.pValueExact" in p
+    assert any(x.endswith("pValueApproximate") for x in p)
+    assert not any(x.endswith("mannWhitneyTest.U") or x.endswith("mannWhitneyTest.pValue") for x in p)
+
+
+def test_list_error_status_wins_over_views(tmp_path, capsys):
+    b = PrismBuilder()
+    b.add_analysis("Bad", "ONE_WAY_ANOVA", {},
+                   {"status": {"error": "INVALID_DATA_TOO_FEW_COLUMNS", "warning": []}},
+                   views=(("View", [["a", "b"]], "text", 2),))
+    p = b.save(tmp_path / "b.prism")
+    code, out, _ = _cli([p, "--list"], capsys)
+    assert code == 0 and "Prism error INVALID_DATA_TOO_FEW_COLUMNS" in out
+
+
+def test_json_carries_the_list_number(tmp_path, capsys):
+    p = _two(tmp_path)
+    code, out, _ = _cli([p, "--json", "--analysis", "02"], capsys)
+    data = json.loads(out)
+    assert [a["number"] for a in data["analyses"]] == [2]
+    code, out, _ = _cli([p, "--json"], capsys)
+    assert [a["number"] for a in json.loads(out)["analyses"]] == [1, 2]
+
+
+def test_builder_zip_metadata_is_platform_independent(tmp_path):
+    import zipfile
+    b = PrismBuilder()
+    b.add_analysis("A", "ONE_WAY_ANOVA", {}, {"status": OK})
+    with zipfile.ZipFile(b.save(tmp_path / "z.prism")) as z:
+        assert {i.create_system for i in z.infolist()} == {3}

@@ -9,6 +9,8 @@ from . import register
 from .common import other_rows, other_section
 from .nonlinear import dataset_label
 
+_READ = [("samples", "summary", n) for n in ("baseline", "totalArea", "totalPeakArea", "peakCount")]
+_PEAK_FIELDS = ("firstX", "lastX", "peakX", "peakY", "area", "areaPercentage")
 _SUMMARY_COLUMNS = ["Data set", "Baseline", "Total area", "Total peak area", "Peaks"]
 _PEAK_COLUMNS = ["Data set", "Peak", "First X", "Last X", "Peak X", "Peak Y", "Area", "Area %"]
 _PEAK_RE = re.compile(r"(\d+)")
@@ -28,7 +30,7 @@ def read_auc(pf, a, warn):
     samples = a.results.get("samples")
     if not isinstance(samples, dict):
         raise KeyError("samples")
-    summary_rows, peak_rows = [], []
+    summary_rows, peak_rows, read = [], [], list(_READ)
     for id_, value in entries(samples):
         v = _dict(value)
         ds = dataset_label(id_)
@@ -36,6 +38,7 @@ def read_auc(pf, a, warn):
         summary_rows.append([ds, num(s.get("baseline")), num(s.get("totalArea")),
                              num(s.get("totalPeakArea")), num(s.get("peakCount"))])
         peaks = _dict(v.get("peaks"))
+        read += [("samples", "peaks", name, f) for name in peaks for f in _PEAK_FIELDS]
         for name in sorted(peaks, key=_peak_order):
             p = _dict(peaks[name])
             peak_rows.append([ds, str(name), num(p.get("firstX")), num(p.get("lastX")),
@@ -46,7 +49,7 @@ def read_auc(pf, a, warn):
         sections.append(Section("Area under curve", list(_SUMMARY_COLUMNS), summary_rows))
     if peak_rows:
         sections.append(Section("Peaks", list(_PEAK_COLUMNS), peak_rows))
-    extra = other_section(other_rows(a.results, ("samples",)))
+    extra = other_section(other_rows(a.results, read))
     if extra is not None:
         sections.append(extra)
     return sections

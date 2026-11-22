@@ -113,7 +113,17 @@ def read_nonlinear(pf, a, warn):
     cmp_rows = _comparison_rows(results.get("modelComparison"))
     if cmp_rows:
         sections.append(Section("Model comparison", list(_CMP_COLUMNS), cmp_rows))
-    extra = other_section(other_rows(results, ("models", "dataSummary", "modelComparison")))
+    read = [("models", "status")] + [("models", "goodnessOfFit", n) for n in
+                                     ("df", "r2", "adjR2", "syx", "rmse", "aicc")]
+    for _id, value in models:
+        for name in _dict(_dict(value).get("parameters")):
+            read += [("models", "parameters", name, n) for n in ("estimate", "se", "ci", "status")]
+    read += [("dataSummary", "xValuesAnalyzed"), ("dataSummary", "yValuesAnalyzed")]
+    cmp_ = ("modelComparison", "fTest")
+    read += [cmp_ + (n,) for n in ("isRun", "status", "preferredModelName")]
+    read += [cmp_ + ("simpleModel", "name"), cmp_ + ("complexModel", "name")]
+    read += [cmp_ + ("summary", n) for n in ("f", "dfNumerator", "dfDenominator", "pValue")]
+    extra = other_section(other_rows(results, read))
     if extra is not None:
         sections.append(extra)
     return sections

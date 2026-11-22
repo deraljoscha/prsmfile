@@ -12,7 +12,10 @@ from .common import (
     family_rows,
     letters_leftovers,
     letters_section,
+    anova_shapes,
+    comparison_shapes,
     other_rows,
+    test_shapes,
     other_section,
     parameters_section,
 )
@@ -33,7 +36,6 @@ _ANOVA_ROWS = (
 _FIXED_ROWS = (("rowFactor", "Row factor"), ("colFactor", "Column factor"),
                ("rowFactorVsColFactor", "Interaction"))
 _RANDOM_NAMES = {"matchedFactor": "Subject", "residual": "Residual"}
-_COMMON_KEYS = ("factorNames", "multipleComparisons", "compactLetterDisplay", "dataSummary")
 
 
 def _dict(x) -> dict:
@@ -131,8 +133,18 @@ def read_twoway(pf, a, warn):
     summary = data_summary_section(model.get("dataSummary"))
     if summary is not None:
         sections.append(summary)
-    consumed = _COMMON_KEYS + (("fixedEffects", "randomEffects", "matchingTest") if key == _REML
-                               else ("anovaTable",))
+    consumed = comparison_shapes() + test_shapes(("factorNames",), "rowFactor", "colFactor")
+    consumed += [("compactLetterDisplay",), ("dataSummary",)]
+    if key == _REML:
+        for k, _ in _FIXED_ROWS:
+            consumed += test_shapes(("fixedEffects", k, "fTest"), "f", "dfNumerator", "dfDenominator",
+                                    "pValue")
+        for k in _dict(model.get("randomEffects")):
+            consumed += test_shapes(("randomEffects", k), "sd", "variance")
+        consumed += test_shapes(("matchingTest",), "chiSquared", "df", "pValue")
+    else:
+        table = _dict(model.get("anovaTable"))
+        consumed += anova_shapes(table, list(table), True)
     other = other_rows(results, (key,))
     other += other_rows(model, consumed)
     other += letters_leftovers(model.get("compactLetterDisplay"))

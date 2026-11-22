@@ -97,14 +97,14 @@ def to_text(pf, reports, tables, numbers=None) -> str:
     return "\n".join(out) + "\n"
 
 
-def to_json_obj(pf, reports, tables) -> dict:
+def to_json_obj(pf, reports, tables, numbers=None) -> dict:
     return {
         "file": str(pf.path),
         "prism_version": pf.prism_version,
         "saved_with": pf.saved_with,
         "format_version": pf.format_version_raw,
         "warnings": list(pf.warnings),
-        "analyses": [r.to_dict() for r in reports],
+        "analyses": [{"number": n, **r.to_dict()} for n, r in zip(_numbers(reports, numbers), reports)],
         "data_tables": [
             {"title": t.title, "format": t.table_format, "columns": list(t.columns),
              "rows": [list(r) for r in t.rows]}

@@ -158,17 +158,68 @@ def data_summary_section(summary) -> Section | None:
 
 
 def other_rows(node, consumed) -> list[list[Cell]]:
-    """[path, value] rows of every key of `node` (a results or model dict) that no reader consumed,
-    so a structured report never drops a stored value silently. `status` is skipped when it is only
-    the VALID marker or the results-level status object (reported as warnings)."""
+    """[path, value] rows of every stored leaf of `node` (a results or model dict) that no reader
+    consumed, so a structured report never drops a stored value silently.
+
+    `consumed` holds top-level key names (the whole subtree is read) and key tuples (shapes, see
+    `flatten`) of leaves or subtrees a reader read inside an otherwise partly read subtree.
+    `status` is skipped when it is only the VALID marker or the results-level status object
+    (reported as warnings)."""
+    skip = {(c,) if isinstance(c, str) else tuple(c) for c in consumed}
     rows: list[list[Cell]] = []
     for k, v in _dict(node).items():
-        if k in consumed:
-            continue
         if k == "status" and (isinstance(v, dict) or v == "VALID"):
             continue
-        rows.extend(flatten(v, str(k)))
-    return rows
+        if (k,) not in skip:
+            rows.extend(flatten(v, str(k), skip, (k,)))
+    # a nested status that is only the VALID marker is not a stored result
+    return [r for r in rows if not (r[0].endswith(".status") and r[1] == "VALID")]
+
+
+def shapes(prefix: tuple, *names) -> list[tuple]:
+    """Shapes prefix + (name,) for every name; a name may itself be a tuple."""
+    return [prefix + (n if isinstance(n, tuple) else (n,)) for n in names]
+
+
+P_VALUE = ("value", "level", "isSignificant", "state")
+DESC_FIELDS = ("n", "mean", "sd", "meanSE", "minimum", "median", "maximum")
+
+
+def desc_shapes(prefix: tuple) -> list[tuple]:
+    """Shapes read by descriptive_section/_desc_row below `prefix` (plain dict with id/value
+    entries, or a keyed collection whose entries are flattened to their value)."""
+    out = shapes(prefix, *DESC_FIELDS)
+    for k in ("sample1", "sample2", "differences"):
+        out += shapes(prefix + (k,), "id", *[("value", f) for f in DESC_FIELDS])
+    return out
+
+
+def anova_shapes(table: dict, keys, variation: bool, epsilon: bool = True) -> list[tuple]:
+    """Shapes anova_row reads, for the rows `keys` of an anovaTable."""
+    fields = ["ss", "df", "ms", "variation" if variation else "r2", "ggEpsilon"]
+    out: list[tuple] = []
+    for k in keys:
+        if k in _dict(table):
+            base = ("anovaTable", k)
+            out += [base + (f,) for f in fields]
+            out += [base + ("fTest", f) for f in ("f", "dfNumerator", "dfDenominator", "pValue")]
+    return out
+
+
+def test_shapes(prefix: tuple, *names) -> list[tuple]:
+    """Shapes of a stored test block read by name (e.g. f, dfNumerator, pValue, status)."""
+    return [prefix + (n,) for n in names]
+
+
+def comparison_shapes(prefix: tuple = ("multipleComparisons",)) -> list[tuple]:
+    """Shapes comparisons_section and the Parameters rows read below multipleComparisons."""
+    out = test_shapes(prefix, "method", "familyCount", "comparisonPerFamilyCount", "comparisonCount")
+    t = prefix + ("tests",)
+    out += test_shapes(t, "meansDifference", "meansDifferenceSE", "meansDifferenceCI", "statistic", "df",
+                       "pValueAdjusted", "pValueIndividual")
+    for k in ("sample1", "sample2"):
+        out += [t + (k, "id"), t + (k, "value", "mean"), t + (k, "value", "n")]
+    return out
 
 
 def letters_leftovers(cld) -> list[list[Cell]]:

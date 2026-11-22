@@ -3,7 +3,7 @@
 
 Run it from the repository root:
 
-    uv run --with scipy --with statsmodels python scripts/make_example.py
+    uv run --with scipy==1.18.1 --with statsmodels==0.15.0 --with numpy==2.5.5 --with pandas==3.1.1 --with patsy==1.0.3 python scripts/make_example.py
 
 The data are invented lab-style numbers (written out below, drawn once from a seeded random
 generator and rounded). Every statistic stored in the file is computed from those numbers.
@@ -26,7 +26,8 @@ Everything else (mean squares, percent of total, R squared, standard errors, q) 
 arithmetic on those numbers. The script asserts that independent routes agree (f_oneway against
 the ANOVA table, Tukey p against the studentized range, statsmodels against the table).
 
-The file is deterministic: running the script twice gives byte-identical output.
+The file is deterministic: running the script twice gives byte-identical output, provided the
+pinned versions above are used (other versions may round the last digits differently).
 """
 from __future__ import annotations
 

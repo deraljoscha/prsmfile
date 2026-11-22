@@ -36,7 +36,7 @@ $ prsmfile examples/example.prism --list
 05  AREA_UNDER_CURVE  calculated  Area under the curve of Tracer clearance
 ```
 
-Show one analysis as text tables. `--analysis` takes the number from `--list` (`02`), an
+Show one analysis as text tables. `--analysis` takes the number from `--list` (`02`, ASCII digits only), an
 analysis id, or else a case-insensitive part of the title:
 
 ```
@@ -68,7 +68,8 @@ Total      6448.77  17
 Other outputs:
 
 ```
-prsmfile FILE --json                # the report sections as one JSON document
+prsmfile FILE --json                # the report sections as one JSON document (each analysis
+                                    # carries its list number as "number")
 prsmfile FILE --json --data         # plus the raw data tables
 prsmfile FILE --csv out_dir         # one CSV per section, plus index.csv
 ```

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -32,6 +33,9 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+_ASCII_NUMBER = re.compile(r"[0-9]+")
+
+
 def _status_error(a) -> str | None:
     """The Prism error code of an analysis whose results hold nothing but a failed status."""
     res = a.results
@@ -44,7 +48,7 @@ def _status_error(a) -> str | None:
 
 def _state(a) -> str:
     err = _status_error(a)
-    if err is not None and not any(ds for _, ds in a.views):
+    if err is not None:
         return f"Prism error {err}"
     if a.has_results:
         return "calculated"
@@ -64,7 +68,7 @@ def _run(args) -> int:
         if args.analysis is not None:
             needle = args.analysis.strip().casefold()
             exact = [(n, a) for n, a in numbered
-                     if a.id.casefold() == needle or (needle.isdigit() and int(needle) == n)]
+                     if a.id.casefold() == needle or (_ASCII_NUMBER.fullmatch(needle) and int(needle) == n)]
             numbered = exact or [(n, a) for n, a in numbered if needle in flat(a.title).casefold()]
             if not numbered:
                 print(f'no analysis matches "{args.analysis}"', file=sys.stderr)
@@ -86,7 +90,7 @@ def _run(args) -> int:
         elif args.json:
             import json
 
-            print(json.dumps(to_json_obj(pf, reports, tables), ensure_ascii=False, indent=2,
+            print(json.dumps(to_json_obj(pf, reports, tables, numbers), ensure_ascii=False, indent=2,
                              allow_nan=False))
         else:
             sys.stdout.write(to_text(pf, reports, tables, numbers))

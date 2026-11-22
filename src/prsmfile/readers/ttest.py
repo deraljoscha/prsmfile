@@ -8,6 +8,7 @@ from .common import (
     _tol,
     derive_direction,
     descriptive_section,
+    desc_shapes,
     letters_leftovers,
     letters_section,
     other_rows,
@@ -25,12 +26,26 @@ _MODELS = {
 }
 _TAILS = {"P_VALUE_TWO_TAILED": "two", "P_VALUE_ONE_TAILED": "one"}
 _TEST_COLUMNS = ["Test", "Statistic name", "Statistic", "df", "DFn", "DFd", "P"]
+_P = ("pValue",)
+_READ_VARIANCE = [("varianceTest", n) for n in ("f", "dfNumerator", "dfDenominator", "pValue")]
+_READ_DIFF_MEANS = [("differenceOfMeans", n) for n in (
+    "n1", "mean1", "n2", "mean2", "difference", "stdErrorOfDifference",
+    "confidenceIntervalOfDifference", "rSquared")]
+# Leaves each model reader reads (shapes below the model dict); everything else of the model is
+# listed under "Other values".
 _TEST_KEYS = {
-    "welchTTestModel": ("welchTTest", "varianceTest", "differenceOfMeans"),
-    "unpairedTTestModel": ("unpairedTTest", "varianceTest", "differenceOfMeans"),
-    "pairedTTestModel": ("pairedTTest", "meanOfDifferences"),
-    "mannWhitneyTestModel": ("mannWhitneyTest", "differenceOfMedians"),
-    "wilcoxonTestModel": ("wilcoxonTest", "medianOfDifferences"),
+    "welchTTestModel": [("welchTTest", n) for n in ("t", "df", "pValue")] + _READ_VARIANCE + _READ_DIFF_MEANS,
+    "unpairedTTestModel": [("unpairedTTest", n) for n in ("t", "df", "pValue")] + _READ_VARIANCE
+    + _READ_DIFF_MEANS,
+    "pairedTTestModel": [("pairedTTest", n) for n in ("t", "df", "pValue")] + [
+        ("meanOfDifferences", n) for n in ("mean", "confidenceIntervalOfDifferences",
+                                           "stdDeviationOfDifferences", "stdErrorOfDifferences",
+                                           "rSquared")],
+    "mannWhitneyTestModel": [("mannWhitneyTest", n) for n in ("U", "pValue")] + [
+        ("differenceOfMedians", n) for n in ("n1", "n2", "median1", "median2",
+                                             "hodgesLehmannDifference", "actualDifference")],
+    "wilcoxonTestModel": [("wilcoxonTest", n) for n in ("signedRanksSum", "pValue")] + [
+        ("medianOfDifferences", "median")],
 }
 _VARIANCE = "F test to compare variances"
 
@@ -273,7 +288,8 @@ def read_ttest(pf, a, warn):
     letters = letters_section(results.get("compactLetterDisplay"))
     if letters is not None:
         sections.append(letters)
-    other = other_rows(results, ("descriptiveStatistics", "compactLetterDisplay", key))
+    other = other_rows(results, desc_shapes(("descriptiveStatistics",))
+                       + [("compactLetterDisplay",), (key,)])
     other += other_rows(model, _TEST_KEYS[key])
     other += letters_leftovers(results.get("compactLetterDisplay"))
     extra = other_section(other)

@@ -22,6 +22,9 @@ def sample(idx, title, peaks, base=0.0):
 
 
 def run(tmp_path, results):
+    sm = results.get("samples")
+    if isinstance(sm, dict) and sm and all(isinstance(v, dict) and "id" in v and "value" in v for v in sm.values()):
+        results = {**results, "samples": PrismBuilder.keyed((v["id"], v["value"]) for v in sm.values())}
     b = PrismBuilder()
     b.add_analysis("U", "AREA_UNDER_CURVE", {"calc": {}}, results, inputs=(("A", "DD"), ("B", "EE")))
     with prsmfile.open(b.save(tmp_path / "u.prism")) as pf:

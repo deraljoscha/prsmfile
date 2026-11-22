@@ -12,15 +12,17 @@ from .common import (
     descriptive_section,
     letters_leftovers,
     letters_section,
+    anova_shapes,
+    comparison_shapes,
+    desc_shapes,
     other_rows,
+    test_shapes,
     other_section,
     parameters_section,
 )
 
 _MODELS = ("ordinaryAnovaModel", "repeatedMeasuresGlmAnovaModel")
 _ASSUMPTION_COLUMNS = ["Test", "Statistic", "DFn", "DFd", "P", "Status"]
-_MODEL_KEYS = ("anovaTable", "brownForsytheTest", "bartlettTest", "multipleComparisons",
-               "compactLetterDisplay", "matchingTest", "dataSummary")
 
 
 def _dict(x) -> dict:
@@ -112,8 +114,13 @@ def read_oneway(pf, a, warn):
     summary = data_summary_section(model.get("dataSummary"))
     if summary is not None:
         sections.append(summary)
-    other = other_rows(results, ("descriptiveStatistics", found[0]))
-    other += other_rows(model, _MODEL_KEYS)
+    other = other_rows(results, desc_shapes(("descriptiveStatistics",)) + [(found[0],)])
+    read = (anova_shapes(table, ("colFactor", "matchedFactor", "residual", "total"), False)
+            + test_shapes(("brownForsytheTest",), "f", "dfNumerator", "dfDenominator", "pValue", "status")
+            + test_shapes(("bartlettTest",), "statistic", "pValue", "status")
+            + test_shapes(("matchingTest",), "f", "dfNumerator", "dfDenominator", "pValue")
+            + comparison_shapes() + [("compactLetterDisplay",), ("dataSummary",)])
+    other += other_rows(model, read)
     other += letters_leftovers(model.get("compactLetterDisplay"))
     extra = other_section(other)
     if extra is not None:

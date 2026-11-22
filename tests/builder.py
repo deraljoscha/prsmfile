@@ -258,6 +258,7 @@ class PrismBuilder:
             for name, data in [("document.json", self._dump(doc)), *self._members.items()]:
                 info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))  # fixed: same bytes every run
                 info.compress_type = zipfile.ZIP_DEFLATED
+                info.create_system = 3  # fixed (Unix): the field otherwise follows the platform
                 info.external_attr = 0o644 << 16
                 z.writestr(info, data)
         return path

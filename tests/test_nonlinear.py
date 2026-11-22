@@ -62,8 +62,8 @@ def sec(r, title):
 
 def res(models, summaries, **kw):
     out = {"status": OK,
-           "models": {f"m{i}": {"id": i_, "value": v} for i, (i_, v) in enumerate(models)},
-           "dataSummary": {f"s{i}": s for i, s in enumerate(summaries)}}
+           "models": PrismBuilder.keyed(models),
+           "dataSummary": PrismBuilder.keyed((s["id"], s["value"]) for s in summaries)}
     out.update(kw)
     return out
 
@@ -73,7 +73,9 @@ def test_nlr_best_fit_constant_param(tmp_path):
               "IC50": par(1.2e-6, se=1.3e-7, lo=9.4e-7, hi=1.6e-6)}
     r = run(tmp_path, res([(mid(0, "276A"), fit(params))], [summary(0, "276A")]))
     assert r.kind == "structured" and r.warnings == []
-    assert [s.title for s in r.sections] == ["Parameters", "Best-fit values", "Goodness of fit"]
+    assert [s.title for s in r.sections] == ["Parameters", "Best-fit values", "Goodness of fit", "Other values"]
+    assert sec(r, "Other values").rows == [
+        ["models[A:276A:Top unconstrained].iterationCount", 10], ["dataSummary[A:276A].yValuesSkipped", 1]]
     assert sec(r, "Parameters").rows == [["Equation", "Sigmoidal 4PL, X is concentration"]]
     t = sec(r, "Best-fit values")
     assert t.columns == ["Data set", "Model", "Parameter", "Estimate", "SE", "CI lower", "CI upper",

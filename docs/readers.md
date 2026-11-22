@@ -30,7 +30,8 @@ without one use the generic reader.
    column (the t test reader does: t or F). Degrees of freedom of an F test go in "DFn" and
    "DFd", p-values are `PValue` objects. Put every stored value the reader has no column for
    into an "Other values" section (`other_rows` and `other_section` in
-   `readers/common.py`), so nothing is dropped silently. A reader that returns no sections
+   `readers/common.py`; pass the key tuples of the leaves you read, for example
+   `("welchTTest", "pValue")`, so unread siblings inside a partly read block still show), so nothing is dropped silently. A reader that returns no sections
    falls back to the generic reader. Warnings for a stored non-OK status read
    "Prism reported <CODE>".
 5. Every row of a section must have exactly `len(columns)` cells.

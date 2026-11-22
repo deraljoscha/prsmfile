@@ -84,10 +84,10 @@ def model(**kw):
 def res(m=None, key="ordinaryAnovaModel", stats=True):
     out = {"status": OK, key: m if m is not None else model()}
     if stats:
-        out["descriptiveStatistics"] = {
-            "d0": {"id": colid(1, "asp"), "value": {"n": 4, "mean": 7.0}},
-            "d1": {"id": colid(0, "ctrl"), "value": {"n": 4, "mean": 3.0}},
-        }
+        out["descriptiveStatistics"] = PrismBuilder.keyed([
+            (colid(1, "asp"), {"n": 4, "mean": 7.0}),
+            (colid(0, "ctrl"), {"n": 4, "mean": 3.0}),
+        ])
     return out
 
 

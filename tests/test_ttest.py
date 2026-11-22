@@ -324,7 +324,8 @@ def test_empty_blocks_omit_sections(tmp_path):
     res["welchTTestModel"]["welchTTest"] = {"status": "INVALID"}
     res["welchTTestModel"]["differenceOfMeans"] = {}
     r = run(tmp_path, res)
-    assert [s.title for s in r.sections] == ["Parameters", "Descriptive statistics"]
+    assert [s.title for s in r.sections] == ["Parameters", "Descriptive statistics", "Other values"]
+    assert sec(r, "Other values").rows == [["welchTTest.status", "INVALID"]]
 
 
 def test_paired_and_wilcoxon_missing_blocks(tmp_path):

@@ -34,16 +34,22 @@ def _leaf(x) -> Cell:
     return x if isinstance(x, str) else str(x)
 
 
-def flatten(node, prefix: str = "") -> list[list[Cell]]:
-    """Rows [path, value] in document order (iterative: no recursion limit)."""
+def flatten(node, prefix: str = "", skip=None, shape: tuple = ()) -> list[list[Cell]]:
+    """Rows [path, value] in document order (iterative: no recursion limit).
+
+    `skip` is an optional set of key tuples ("shapes": the dict keys from the root down, collection
+    ids and list indexes left out). A node whose shape, or the shape of any ancestor, is in `skip`
+    is not listed, except the extra keys of a p-value object (only its value row is skipped)."""
     rows: list[list[Cell]] = []
-    stack = [(prefix, node)]
+    skip = skip or ()
+    stack = [(prefix, node, shape, shape in skip if shape else False)]
     while stack:
-        path, cur = stack.pop()
+        path, cur, shp, gone = stack.pop()
         if _is_p(cur):
-            rows.append([path, PValue.from_obj(cur)])
+            if not gone:
+                rows.append([path, PValue.from_obj(cur)])
             extras = [
-                (f"{path}.{k}" if path else str(k), v)
+                (f"{path}.{k}" if path else str(k), v, shp + (k,), (shp + (k,)) in skip)
                 for k, v in cur.items()
                 if k not in _P_KEYS
             ]
@@ -52,15 +58,17 @@ def flatten(node, prefix: str = "") -> list[list[Cell]]:
             children = []
             for id_, value in entries(cur):
                 seg = label(id_)
-                children.append((f"{path}[{seg}]" if seg else path, value))
+                children.append((f"{path}[{seg}]" if seg else path, value, shp, gone))
             stack.extend(reversed(children))
         elif isinstance(cur, dict):
-            stack.extend(
-                reversed([(f"{path}.{k}" if path else str(k), v) for k, v in cur.items()])
-            )
+            kids = []
+            for k, v in cur.items():
+                ks = shp + (k,)
+                kids.append((f"{path}.{k}" if path else str(k), v, ks, gone or ks in skip))
+            stack.extend(reversed(kids))
         elif isinstance(cur, list):
-            stack.extend(reversed([(f"{path}[{i}]", v) for i, v in enumerate(cur)]))
-        else:
+            stack.extend(reversed([(f"{path}[{i}]", v, shp, gone) for i, v in enumerate(cur)]))
+        elif not gone:
             rows.append([path, _leaf(cur)])
     return rows
 

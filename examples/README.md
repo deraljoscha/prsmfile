@@ -18,10 +18,12 @@ statsmodels 0.15.0 (development-only tools, not dependencies of prsmfile). The s
 says which library computed which number. To regenerate the file:
 
 ```
-uv run --with scipy --with statsmodels python scripts/make_example.py
+uv run --with scipy==1.18.1 --with statsmodels==0.15.0 --with numpy==2.5.5 --with pandas==3.1.1 --with patsy==1.0.3 python scripts/make_example.py
 ```
 
-The output is byte-identical on every run. `tests/test_examples.py` reads the file and checks
+With exactly these pinned versions the output is byte-identical on every run (the zip
+metadata is fixed too). Other library versions can change the last digits of a statistic and
+then the bytes. `tests/test_examples.py` reads the file and checks
 the key values against the numbers the script computes.
 
 Try it:
