@@ -37,7 +37,8 @@ $ prsmfile examples/example.prism --list
 ```
 
 Show one analysis as text tables. `--analysis` takes the number from `--list` (`02`, ASCII digits only), an
-analysis id, or else a case-insensitive part of the title:
+analysis id, or else a case-insensitive part of the title. A pure number that matches no analysis is an
+error (`no analysis numbered N`) and never searches titles:
 
 ```
 $ prsmfile examples/example.prism --analysis 02

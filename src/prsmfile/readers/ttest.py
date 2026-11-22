@@ -5,7 +5,6 @@ from ..values import PValue, ci, entries, int_idx, label, letter, num
 from . import register
 from .common import (
     DIFFERENCES,
-    _tol,
     derive_direction,
     descriptive_section,
     desc_shapes,
@@ -203,13 +202,11 @@ def _effect_wilcoxon(model, stats, warn) -> Section:
     direction = None
     if isinstance(ids, list) and len(ids) >= 2:
         l1, l2 = label(ids[0]), label(ids[1])
-        if l1 and l2:
-            direction = f"{l1} - {l2}"
-    dm = num(_dict(diff.get("value")).get("mean"))
-    s1 = num(_dict(_dict(_dict(stats).get("sample1")).get("value")).get("mean"))
-    s2 = num(_dict(_dict(_dict(stats).get("sample2")).get("value")).get("mean"))
-    if dm is not None and s1 is not None and s2 is not None and abs(dm - (s1 - s2)) > _tol(dm, s1, s2):
-        warn("Direction of difference could not be verified.")
+        dm = num(_dict(diff.get("value")).get("mean"))
+        s1 = num(_dict(_dict(_dict(stats).get("sample1")).get("value")).get("mean"))
+        s2 = num(_dict(_dict(_dict(stats).get("sample2")).get("value")).get("mean"))
+        # the label is only shown when the stored mean difference confirms its sign
+        direction = derive_direction(dm, s2, s1, l2, l1, warn)
     return Section("Effect", ["Median of differences", "Difference is"], [[median, direction]])
 
 

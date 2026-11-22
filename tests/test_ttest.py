@@ -222,8 +222,16 @@ def test_wilcoxon_order(tmp_path):
 
 
 def test_wilcoxon_order_unverified(tmp_path):
-    r = run(tmp_path, wilcoxon_results([(1, "x"), (0, "y")], diff_mean=-3.0), {"experimentalDesign": "WILCOXON_TEST"})
+    r = run(tmp_path, wilcoxon_results([(1, "x"), (0, "y")], diff_mean=1.0), {"experimentalDesign": "WILCOXON_TEST"})
     assert DIRW in r.warnings
+    assert sec(r, "Effect").rows == [[2.5, None]]
+
+
+def test_wilcoxon_reversed_means_do_not_contradict(tmp_path):
+    # stored mean difference equals sample2 - sample1: label must name that sign, not x - y
+    r = run(tmp_path, wilcoxon_results([(1, "x"), (0, "y")], diff_mean=-3.0), {"experimentalDesign": "WILCOXON_TEST"})
+    assert r.warnings == []
+    assert sec(r, "Effect").rows == [[2.5, "A:y - B:x"]]
 
 
 def test_variance_status_only(tmp_path):
@@ -371,11 +379,11 @@ def test_fallback_needs_two_inputs(tmp_path):
     assert e[0] is None and e[3] == "B:Drug"
 
 
-def test_wilcoxon_without_median_keeps_direction_and_check(tmp_path):
-    res = wilcoxon_results([(1, "x"), (0, "y")], diff_mean=-3.0)
+def test_wilcoxon_without_median_unverified_direction_is_none(tmp_path):
+    res = wilcoxon_results([(1, "x"), (0, "y")], diff_mean=1.0)
     del res["wilcoxonTestModel"]["medianOfDifferences"]
     r = run(tmp_path, res, {"experimentalDesign": "WILCOXON_TEST"})
-    assert sec(r, "Effect").rows == [[None, "B:x - A:y"]]
+    assert not [x for x in r.sections if x.title == "Effect"]
     assert DIRW in r.warnings
 
 

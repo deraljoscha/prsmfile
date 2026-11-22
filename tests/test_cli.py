@@ -526,3 +526,11 @@ def test_failed_rename_restores_empty_target(tmp_path, monkeypatch, capsys):
 def test_package_exports_table_reader():
     assert prsmfile.read_table is not None and prsmfile.Table is not None
     assert {"read_table", "Table"} <= set(prsmfile.__all__)
+
+
+def test_unmatched_number_does_not_fall_back_to_title(tmp_path, capsys):
+    b = PrismBuilder()
+    b.add_analysis("Run 7 of the series", "ONE_WAY_ANOVA", {}, {"x": 1, **OK})
+    p = b.save(tmp_path / "n.prism")
+    code, out, err = run_cli([p, "--list", "--analysis", "7"], capsys)
+    assert code == 1 and out == "" and err.strip() == "no analysis numbered 7"

@@ -28,7 +28,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--data", action="store_true", help="include the raw data tables")
     p.add_argument("--analysis", metavar="TEXT",
                    help="only the analysis with this number (as in --list) or id, "
-                        "else the analyses whose title contains TEXT (case-insensitive)")
+                        "else the analyses whose title contains TEXT (case-insensitive); "
+                        "a pure number never falls back to the title")
     p.add_argument("--version", action="version", version=f"prsmfile {__version__}")
     return p
 
@@ -69,6 +70,9 @@ def _run(args) -> int:
             needle = args.analysis.strip().casefold()
             exact = [(n, a) for n, a in numbered
                      if a.id.casefold() == needle or (_ASCII_NUMBER.fullmatch(needle) and int(needle) == n)]
+            if not exact and _ASCII_NUMBER.fullmatch(needle):
+                print(f"no analysis numbered {int(needle)}", file=sys.stderr)
+                return 1
             numbered = exact or [(n, a) for n, a in numbered if needle in flat(a.title).casefold()]
             if not numbered:
                 print(f'no analysis matches "{args.analysis}"', file=sys.stderr)
