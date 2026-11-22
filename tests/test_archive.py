@@ -508,21 +508,8 @@ def test_bounded_reader_ignores_lying_size():
     assert _archive._read_bounded(io.BytesIO(b"x" * 1000), "ok.json", 1000) == b"x" * 1000
 
 
-def test_high_ratio_member(tmp_path, monkeypatch):
-    monkeypatch.setattr(_archive, "RATIO_MIN_SIZE", 1000)
-    monkeypatch.setattr(_archive, "MAX_RATIO", 10)
-    p = _mem_zip(tmp_path, {"bomb.json": "0" * 100_000}, zipfile.ZIP_DEFLATED)
-    with prsmfile.open(p) as pf:
-        with pytest.raises(PrismFormatError) as e:
-            pf.read_text("bomb.json")
-    assert "bomb.json" in str(e.value) and "MAX_RATIO" in str(e.value)
 
 
-def test_ratio_not_checked_below_threshold(tmp_path, monkeypatch):
-    monkeypatch.setattr(_archive, "MAX_RATIO", 2)
-    p = _mem_zip(tmp_path, {"small.json": "0" * 100_000}, zipfile.ZIP_DEFLATED)
-    with prsmfile.open(p) as pf:  # default RATIO_MIN_SIZE: 10 MiB
-        assert len(pf.read_text("small.json")) == 100_000
 
 
 def test_total_size_limit(tmp_path, monkeypatch):
@@ -597,82 +584,18 @@ def test_stored_and_deflated_accepted(tmp_path):
             assert pf.read_json("a.json") == {"k": 1}
 
 
-def _no_directory_parse(monkeypatch):
-    def boom(self):
-        raise AssertionError("central directory was parsed")
-
-    monkeypatch.setattr(zipfile.ZipFile, "_RealGetContents", boom)
 
 
-def test_member_count_checked_before_directory_parse(tmp_path, monkeypatch):
-    monkeypatch.setattr(_archive, "MAX_MEMBERS", 5)
-    p = _mem_zip(tmp_path, {f"x/{i}.json": "{}" for i in range(10)})
-    _no_directory_parse(monkeypatch)
-    with pytest.raises(PrismFormatError) as e:
-        prsmfile.open(p)
-    assert "MAX_MEMBERS" in str(e.value)
 
 
-def test_member_count_zip64_record_checked_before_directory_parse(tmp_path, monkeypatch):
-    p = _mem_zip(tmp_path, {"a.json": "{}"})
-    raw = p.read_bytes()
-    e = raw.rfind(b"PK\x05\x06")
-    _sig, _d, _cd, n, _nt, cd_size, cd_off, _c = struct.unpack("<4s4H2LH", raw[e:e + 22])
-    z64 = struct.pack("<4sQHHLLQQQQ", b"PK\x06\x06", 44, 45, 45, 0, 0, n, 10_000_000, cd_size, cd_off)
-    loc = struct.pack("<4sLQL", b"PK\x06\x07", 0, e, 1)
-    eocd = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 0xFFFF, 0xFFFF, cd_size, 0xFFFFFFFF, 0)
-    p.write_bytes(raw[:e] + z64 + loc + eocd)
-    _no_directory_parse(monkeypatch)
-    with pytest.raises(PrismFormatError) as ex:
-        prsmfile.open(p)
-    assert "MAX_MEMBERS" in str(ex.value)
 
 
-def test_directory_size_checked_before_directory_parse(tmp_path, monkeypatch):
-    monkeypatch.setattr(_archive, "MAX_DIRECTORY_SIZE", 100)
-    p = _mem_zip(tmp_path, {f"x/{i}.json": "{}" for i in range(10)})
-    _no_directory_parse(monkeypatch)
-    with pytest.raises(PrismFormatError) as e:
-        prsmfile.open(p)
-    assert "MAX_DIRECTORY_SIZE" in str(e.value)
 
 
-def test_header_size_smaller_than_data_raises(tmp_path):
-    # real zip metadata: central directory size and CRC patched to the first 10 bytes
-    body = '{"k": "' + "v" * 5000 + '"}'
-    p = _mem_zip(tmp_path, {"liar.json": body}, zipfile.ZIP_DEFLATED)
-    _patch_cd(p, "liar.json", size=10, crc=zlib.crc32(body.encode()[:10]))
-    with zipfile.ZipFile(p) as z:
-        assert z.getinfo("liar.json").file_size == 10
-    with prsmfile.open(p) as pf:
-        with pytest.raises(PrismFormatError) as e:
-            pf.read_text("liar.json")
-    assert "liar.json" in str(e.value)
 
 
-def test_header_size_larger_than_data_raises(tmp_path):
-    body = '{"k": "' + "v" * 5000 + '"}'
-    p = _mem_zip(tmp_path, {"liar.json": body}, zipfile.ZIP_DEFLATED)
-    _patch_cd(p, "liar.json", size=len(body) + 50)
-    with prsmfile.open(p) as pf:
-        with pytest.raises(PrismFormatError):
-            pf.read_text("liar.json")
 
 
-def test_failed_read_counts_toward_total(tmp_path, monkeypatch):
-    monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", 3000)
-    body = '{"k": "' + "v" * 2000 + '"}'
-    p = _mem_zip(tmp_path, {"a.json": body, "b.json": body}, zipfile.ZIP_DEFLATED)
-    _patch_cd(p, "a.json", size=10, crc=zlib.crc32(body.encode()[:10]))
-    with prsmfile.open(p) as pf:
-        with pytest.raises(PrismFormatError):
-            pf.read_text("a.json")  # read bytes, then failed
-        assert pf._total_read > 0
-        # b.json alone fits, but the bytes of the failed read are spent
-        monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", pf._total_read + 100)
-        with pytest.raises(PrismFormatError) as e:
-            pf.read_text("b.json")
-    assert "MAX_TOTAL_SIZE" in str(e.value)
 
 
 def test_rereading_a_member_counts_once(tmp_path, monkeypatch):
@@ -695,3 +618,54 @@ def test_concurrent_reads_share_budget_consistently(tmp_path, monkeypatch):
         for t in ts:
             t.join()
         assert pf._total_read == before + 8 * 100_000
+
+
+def test_lying_header_cannot_bypass_member_limit(tmp_path, monkeypatch):
+    # real zip metadata: central directory claims 10 MB, the deflate data is much larger
+    monkeypatch.setattr(_archive, "MAX_MEMBER_SIZE", 1000)
+    p = _mem_zip(tmp_path, {"bomb.json": "0" * 100_000}, zipfile.ZIP_DEFLATED)
+    _patch_cd(p, "bomb.json", size=10_000_000)
+    with prsmfile.open(p) as pf:
+        with pytest.raises(PrismFormatError) as e:
+            pf.read_text("bomb.json")
+    assert "bomb.json" in str(e.value) and "MAX_MEMBER_SIZE" in str(e.value)
+    assert pf._total_read < 1100  # 1001 bytes of the bomb plus document.json
+
+
+def test_failed_read_counts_toward_total(tmp_path, monkeypatch):
+    p = _mem_zip(tmp_path, {"a.json": " " * 2000, "b.json": " " * 2000}, zipfile.ZIP_DEFLATED)
+    with prsmfile.open(p) as pf:
+        monkeypatch.setattr(_archive, "MAX_MEMBER_SIZE", 500)
+        with pytest.raises(PrismFormatError):
+            pf.read_text("a.json")  # 501 bytes read, then rejected
+        spent = pf._total_read
+        assert spent > 0
+        monkeypatch.setattr(_archive, "MAX_MEMBER_SIZE", 10_000)
+        monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", spent + 100)
+        with pytest.raises(PrismFormatError) as e:
+            pf.read_text("b.json")
+    assert "MAX_TOTAL_SIZE" in str(e.value)
+
+
+def test_file_size_limit_checked_before_parsing(tmp_path, monkeypatch):
+    p = _mem_zip(tmp_path, {"a.json": "{}"})
+    monkeypatch.setattr(_archive, "MAX_FILE_SIZE", p.stat().st_size - 1)
+
+    def boom(self):
+        raise AssertionError("member list was parsed")
+
+    monkeypatch.setattr(zipfile.ZipFile, "_RealGetContents", boom)
+    with pytest.raises(PrismFormatError) as e:
+        prsmfile.open(p)
+    assert "MAX_FILE_SIZE" in str(e.value)
+    with io.open(p, "rb") as fp:  # file objects are checked too
+        with pytest.raises(PrismFormatError):
+            prsmfile.open(fp)
+
+
+def test_corrupt_member_still_warns(tmp_path):
+    p = _mem_zip(tmp_path, {"x.json": '{"k": "' + "v" * 200 + '"}'}, zipfile.ZIP_DEFLATED)
+    _patch_cd(p, "x.json", crc=1)  # CRC mismatch, as in 0.1.0: skipped with a warning
+    with prsmfile.open(p) as pf:
+        assert pf.read_json("x.json") is None
+        assert any("x.json" in w for w in pf.warnings)

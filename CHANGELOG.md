@@ -8,7 +8,7 @@ Breaking changes in 0.x releases are listed here.
 
 ### Security
 
-- Archive reading is bounded against zip bombs and oversized members: at most 100,000 members, a member list of 64 MiB, 512 MiB per member read, 4 GiB in total per opened file (each member counted once, bytes of failed reads included, counter protected by a lock), and a compression ratio of at most 200 for members above 10 MiB. Member count and member list size are checked from the end-of-central-directory records (also zip64) before the list is parsed. Members are read through a bounded reader and must be exactly as long as their header says, so a false size in the archive header can neither bypass the limits nor truncate data silently. Only stored and deflate members are read; bzip2 and lzma members are rejected because their decompression is not bounded. A violation raises `PrismFormatError` naming the member and the limit (CLI exit 1).
+- Archive reading is bounded against zip bombs and oversized members: the file may be at most 2 GiB (checked before the member list is parsed; file objects must be seekable), with at most 100,000 members, 512 MiB per member and 4 GiB read in total per opened file (each member counted once, bytes of failed reads included, counter protected by a lock). Sizes in the archive are not trusted: members are counted as they are read through a bounded reader. Only stored and deflate members are read; bzip2 and lzma members are rejected because their decompression is not bounded. A violation raises `PrismFormatError` naming the member and the limit (CLI exit 1). Corrupt members are handled as before.
 
 ## [0.1.0] - 2026-11-22
 

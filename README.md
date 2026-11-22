@@ -153,13 +153,11 @@ so nothing is dropped silently.
   terminal, so such columns look misaligned. JSON and CSV output are not affected.
 - `.pzf` files (Prism's other file format) are not supported. Save the project as `.prism`.
 - Graphs, layouts and embedded media are not read.
-- Archives are read with limits against zip bombs (100,000 members, 64 MiB member list,
-  512 MiB per member, 4 GiB read in total per opened file with each member counted once,
-  compression ratio 200 above 10 MiB). Only stored and deflate members are read. Real Prism files
-  stay far below the limits. Member count and member list size are checked when the file is
-  opened; sizes, ratio and compression are checked when a member is read, so the error names that
-  member and appears on first access. A member whose data is not as long as its header says is
-  rejected too.
+- Archives are read with limits against zip bombs: file size 2 GiB and 100,000 members (both
+  checked when the file is opened), 512 MiB per member and 4 GiB read in total per opened file
+  with each member counted once (checked while reading, so the error names the member and
+  appears on first access). Only stored and deflate members are read. Real Prism files stay far
+  below the limits (the largest in the test corpus is 41 MB).
 - Only the five structured families above get dedicated readers; other analyses are generic.
 - For unpaired tests, the stored `swapDirection` flag is not trusted. The direction of a
   difference is derived from the stored means.
