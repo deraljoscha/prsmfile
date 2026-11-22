@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Callable
 
 from ..report import Cell, Section
-from ..values import entries, label, num
+from ..values import PValue, ci, entries, label, num
 
 
 def parameters_section(rows: list[tuple[str, Cell]]) -> Section:
@@ -52,3 +52,51 @@ def derive_direction(d, a1, a2, l1, l2, warn: Callable[[str], None]) -> str | No
     if e_rev < e_fwd:
         return f"{l1} - {l2}"
     return f"{l2} - {l1}"  # forward, or an exact tie
+
+
+def _dict(x) -> dict:
+    return x if isinstance(x, dict) else {}
+
+
+def anova_columns(variation: bool) -> list[str]:
+    if variation:
+        return ["Source", "SS", "df", "MS", "% of total", "F", "DFn", "DFd", "P"]
+    return ["Source", "SS", "df", "MS", "F", "DFn", "DFd", "P", "R squared"]
+
+
+def anova_row(source: str, node: dict, variation: bool) -> list[Cell]:
+    """One ANOVA table row; every field via .get and num. `variation` is Prism's percent of total."""
+    node = _dict(node)
+    f = _dict(node.get("fTest"))
+    head = [source, num(node.get("ss")), num(node.get("df")), num(node.get("ms"))]
+    test = [num(f.get("f")), num(f.get("dfNumerator")), num(f.get("dfDenominator")),
+            PValue.from_obj(f.get("pValue"))]
+    if variation:
+        return head + [num(node.get("variation"))] + test
+    return head + test + [num(node.get("r2"))]
+
+
+COMPARISON_COLUMNS = ["Comparison", "Mean diff", "SE", "CI lower", "CI upper", "CI level",
+                      "Statistic", "df", "P adjusted", "P individual"]
+
+
+def comparisons_section(mc: dict) -> Section:
+    """Pairwise multiple comparisons; Mean diff is the stored sample1 - sample2."""
+    mc = _dict(mc)
+    method = mc.get("method")
+    title = f"Multiple comparisons ({method})" if isinstance(method, str) and method.strip() \
+        else "Multiple comparisons"
+    rows: list[list[Cell]] = []
+    for id1, inner in entries(mc.get("tests")):
+        for id2, value in entries(inner):
+            if not isinstance(value, dict):
+                continue
+            lo, hi, level = ci(value.get("meansDifferenceCI"))
+            rows.append([
+                f"{label(id1)} vs {label(id2)}",
+                num(value.get("meansDifference")), num(value.get("meansDifferenceSE")),
+                lo, hi, level, num(value.get("statistic")), num(value.get("df")),
+                PValue.from_obj(value.get("pValueAdjusted")),
+                PValue.from_obj(value.get("pValueIndividual")),
+            ])
+    return Section(title, list(COMPARISON_COLUMNS), rows)
