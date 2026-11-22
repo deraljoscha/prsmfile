@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+import json
+import re
+import zipfile
+import zlib
+from dataclasses import dataclass, field
+
+from .errors import PrismFormatError
+from .values import letter
+
+_SHEET_RE = re.compile(r"^analyses/([^/]+)/sheet\.json$")
+_READ_ERRORS = (zipfile.BadZipFile, zlib.error, OSError, EOFError, NotImplementedError, RuntimeError)
+
+
+def _is_opaque(name: str) -> bool:
+    """Members that are never read: media, binary graph and layout data."""
+    return name.startswith("media/") or name.endswith(".bin")
+
+
+def _text(x) -> str | None:
+    if isinstance(x, str) and x.strip():
+        return x
+    return None
+
+
+def _norm(s: str) -> str:
+    return " ".join(s.split())
+
+
+def _parse_version(raw) -> tuple[int, ...]:
+    if not isinstance(raw, str):
+        return ()
+    try:
+        return tuple(int(p) for p in raw.split("-"))
+    except ValueError:
+        return ()
+
+
+@dataclass
+class Analysis:
+    id: str
+    title: str
+    analysis_class: str
+    is_calculated: bool | None
+    parameters: dict = field(default_factory=dict)
+    results: dict | None = None
+    inputs: list[tuple[str, str]] = field(default_factory=list)
+    views: list[tuple[str, str | None]] = field(default_factory=list)
+    alerts: list[str] = field(default_factory=list)
+
+    @property
+    def has_results(self) -> bool:
+        return self.results is not None
+
+
+class PrismFile:
+    def __init__(self, path):
+        self.path = path
+        self.warnings: list[str] = []
+        self._analyses: list[Analysis] | None = None
+        try:
+            self._zip = zipfile.ZipFile(path)
+        except zipfile.BadZipFile:
+            raise PrismFormatError(f"{path}: not a zip archive (not a .prism file)") from None
+        except OSError as e:
+            raise PrismFormatError(f"{path}: {e.strerror or e}") from None
+        try:
+            self._names = set(self._zip.namelist())
+            if "document.json" not in self._names:
+                raise PrismFormatError(f"{path}: document.json missing (not a .prism file)")
+            try:
+                raw = self._zip.read("document.json")
+                doc = json.loads(raw.decode("utf-8"))
+            except _READ_ERRORS + (UnicodeDecodeError, ValueError) as e:
+                raise PrismFormatError(f"{path}: document.json unreadable ({e})") from None
+            if not isinstance(doc, dict):
+                raise PrismFormatError(f"{path}: document.json root is not an object")
+        except BaseException:
+            self._zip.close()
+            raise
+        self._doc = doc
+        raw_v = doc.get("formatVersion")
+        self.format_version_raw: str | None = raw_v if isinstance(raw_v, str) else None
+        self.format_version: tuple[int, ...] = _parse_version(raw_v)
+        if self.format_version_raw is not None and (
+            not self.format_version or self.format_version[0] != 1
+        ):
+            self.warnings.append(
+                f"Unknown format version {self.format_version_raw}; structured readers skipped."
+            )
+        self.prism_version = self._version_of("createdBy")
+        self.saved_with = self._version_of("modifiedBy")
+
+    def _version_of(self, key: str) -> str | None:
+        v = self._doc.get(key)
+        v = v.get("version") if isinstance(v, dict) else None
+        return v if isinstance(v, str) else None
+
+    def __enter__(self) -> "PrismFile":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self._zip.close()
+
+    def read_text(self, name: str) -> str | None:
+        if _is_opaque(name) or name not in self._names:
+            return None
+        try:
+            return self._zip.read(name).decode("utf-8")
+        except UnicodeDecodeError:
+            self.warnings.append(f"Could not decode {name}")
+        except _READ_ERRORS:
+            self.warnings.append(f"Could not read {name}")
+        return None
+
+    def read_json(self, name: str) -> dict | None:
+        text = self.read_text(name)
+        if text is None:
+            return None
+        try:
+            obj = json.loads(text)
+        except ValueError:
+            self.warnings.append(f"Could not parse {name}")
+            return None
+        if not isinstance(obj, dict):
+            self.warnings.append(f"{name} is not a JSON object")
+            return None
+        return obj
+
+    def analyses(self) -> list[Analysis]:
+        if self._analyses is None:
+            self._analyses = self._discover()
+        return list(self._analyses)
+
+    def _discover(self) -> list[Analysis]:
+        ids = []
+        for n in self._zip.namelist():
+            m = _SHEET_RE.match(n)
+            if m:
+                ids.append(m.group(1))
+        found: dict[str, Analysis] = {}
+        for aid in ids:
+            a = self._load(aid)
+            if a is not None:
+                found[aid] = a
+        listed = []
+        sheets = self._doc.get("sheets")
+        lst = sheets.get("analyses") if isinstance(sheets, dict) else None
+        if isinstance(lst, list):
+            for aid in lst:
+                if isinstance(aid, str) and aid in found and aid not in listed:
+                    listed.append(aid)
+        rest = sorted((a for k, a in found.items() if k not in listed), key=lambda a: a.title)
+        return [found[k] for k in listed] + rest
+
+    def _load(self, aid: str) -> Analysis | None:
+        base = f"analyses/{aid}/"
+        sheet = self.read_json(base + "sheet.json")
+        if sheet is None:
+            self.warnings.append(f"Skipped analysis {aid}: unreadable sheet.json")
+            return None
+        calc = sheet.get("isCalculated")
+        a = Analysis(
+            id=aid,
+            title=_text(sheet.get("title")) or "(untitled)",
+            analysis_class=_text(sheet.get("analysisClass")) or "UNKNOWN",
+            is_calculated=calc if isinstance(calc, bool) else None,
+        )
+        params = self.read_json(base + "parameters.json")
+        content = params.get("content") if params else None
+        a.parameters = content if isinstance(content, dict) else {}
+        res = self.read_json(base + "results.json")
+        content = res.get("content") if res else None
+        a.results = content if isinstance(content, dict) else None
+        items = sheet.get("inputDataSets")
+        for i, item in enumerate(items if isinstance(items, list) else []):
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("idx")
+            ltr = idx if isinstance(idx, str) and idx.strip() else letter(i)
+            a.inputs.append((ltr, _text(item.get("title")) or ltr))
+        a.views = self._views(base)
+        a.alerts = self._alerts(base, sheet)
+        return a
+
+    def _views(self, base: str) -> list[tuple[str, str | None]]:
+        prefix = base + "result_sheets/"
+        names = sorted(n for n in self._names if n.startswith(prefix) and n.endswith(".json"))
+        out = []
+        for n in names:
+            v = self.read_json(n)
+            if v is None:
+                continue
+            idx = v.get("viewIdx")
+            key = idx if isinstance(idx, int) and not isinstance(idx, bool) else float("inf")
+            name = v.get("name")
+            ds = v.get("dataSheet")
+            out.append((key, (name if isinstance(name, str) else "", ds if isinstance(ds, str) else None)))
+        out.sort(key=lambda p: p[0])  # stable
+        return [p[1] for p in out]
+
+    def _alerts(self, base: str, sheet: dict) -> list[str]:
+        texts = []
+        t = _text(sheet.get("alertText"))
+        if t:
+            texts.append(t)
+        prefix = base + "floating_notes/"
+        for n in sorted(x for x in self._names if x.startswith(prefix) and x.endswith(".json")):
+            note = self.read_json(n)
+            if not note or note.get("isAuto") is not True:
+                continue
+            s = note.get("text")
+            s = s.get("string") if isinstance(s, dict) else s
+            if _text(s):
+                texts.append(s)
+        seen: set[str] = set()
+        out = []
+        for s in texts:
+            k = _norm(s)
+            if k not in seen:
+                seen.add(k)
+                out.append(k)
+        return out
+
+
+def open(path) -> PrismFile:  # noqa: A001
+    return PrismFile(path)
