@@ -1,0 +1,203 @@
+"""T_TESTS_AND_NONPARAMETRIC: t tests, Mann-Whitney and Wilcoxon (docs/format.md 2.2)."""
+from __future__ import annotations
+
+from ..values import PValue, ci, entries, label, num
+from . import register
+from .common import (
+    DIFFERENCES,
+    _tol,
+    derive_direction,
+    descriptive_section,
+    parameters_section,
+)
+from ..report import Section
+
+_MODELS = {
+    "WELCH_T_TEST": "welchTTestModel",
+    "UNPAIRED_T_TEST": "unpairedTTestModel",
+    "PAIRED_T_TEST": "pairedTTestModel",
+    "MANN_WHITNEY_TEST": "mannWhitneyTestModel",
+    "WILCOXON_TEST": "wilcoxonTestModel",
+}
+_TAILS = {"P_VALUE_TWO_TAILED": "two", "P_VALUE_ONE_TAILED": "one"}
+_TEST_COLUMNS = ["Test", "Statistic", "Value", "df", "P"]
+_VARIANCE = "F test to compare variances"
+
+
+def _dict(x) -> dict:
+    return x if isinstance(x, dict) else {}
+
+
+def _model_key(design, results: dict) -> str:
+    if design in _MODELS:
+        return _MODELS[design]
+    if design is None:  # no design stored: use the one model key present
+        found = [k for k in _MODELS.values() if k in results]
+        if len(found) == 1:
+            return found[0]
+    raise KeyError(design)
+
+
+def _p(obj):
+    return PValue.from_obj(obj)
+
+
+def _labelled(stats: dict, name: str):
+    """(label, value dict) of a named descriptive entry, or (None, {})."""
+    e = _dict(_dict(stats).get(name))
+    id_ = e.get("id")
+    return (label(id_) or None if isinstance(id_, (dict, list)) else None), _dict(e.get("value"))
+
+
+def _match_label(stats: dict, n, key: str, val) -> list[str]:
+    """Labels of the non-`differences` entries whose (n, key) equals (n, val) exactly."""
+    n, val = num(n), num(val)
+    if n is None or val is None:
+        return []
+    out = []
+    for id_, value in entries({k: v for k, v in _dict(stats).items() if k != DIFFERENCES}):
+        v = _dict(value)
+        if num(v.get("n")) == n and num(v.get(key)) == val:
+            out.append(label(id_))
+    return out
+
+
+def _input_label(item) -> str:
+    ltr, title = item
+    return ltr if title == ltr else f"{ltr}:{title}"
+
+
+def _groups(a, stats, n1, v1, n2, v2, key, warn):
+    """Group labels by exact (n, value) match; else from input order; else None."""
+    m1, m2 = _match_label(stats, n1, key, v1), _match_label(stats, n2, key, v2)
+    if len(m1) == 1 and len(m2) == 1 and m1[0] != m2[0]:
+        return m1[0] or None, m2[0] or None
+    if len(a.inputs) >= 2:
+        warn("Group labels inferred from input order.")
+        return _input_label(a.inputs[0]), _input_label(a.inputs[1])
+    return None, None
+
+
+def _variance_row(model: dict, warn):
+    vt = model.get("varianceTest")
+    if not isinstance(vt, dict):
+        return None
+    f = num(vt.get("f"))
+    if f is None:
+        warn(f"{_VARIANCE}: {vt.get('status')}")
+        return [_VARIANCE, "F", None, None, None]
+    dfn, dfd = num(vt.get("dfNumerator")), num(vt.get("dfDenominator"))
+    df = f"{dfn:g}, {dfd:g}" if dfn is not None and dfd is not None else None
+    return [_VARIANCE, "F", f, df, _p(vt.get("pValue"))]
+
+
+def _effect_two_means(a, model, stats, warn) -> Section:
+    d = _dict(model["differenceOfMeans"])
+    n1, m1, n2, m2 = d.get("n1"), num(d.get("mean1")), d.get("n2"), num(d.get("mean2"))
+    g1, g2 = _groups(a, stats, n1, m1, n2, m2, "mean", warn)
+    diff = num(d.get("difference"))
+    lo, hi, level = ci(d.get("confidenceIntervalOfDifference"))
+    return Section(
+        "Effect",
+        ["Group 1", "Mean 1", "n 1", "Group 2", "Mean 2", "n 2", "Difference", "Difference is",
+         "SE", "CI lower", "CI upper", "CI level", "R squared"],
+        [[g1, m1, num(n1), g2, m2, num(n2), diff,
+          derive_direction(diff, m1, m2, g1, g2, warn),
+          num(d.get("stdErrorOfDifference")), lo, hi, level, num(d.get("rSquared"))]],
+    )
+
+
+def _effect_paired(model, stats, warn) -> Section:
+    d = _dict(model["meanOfDifferences"])
+    l1, s1 = _labelled(stats, "sample1")
+    l2, s2 = _labelled(stats, "sample2")
+    mean = num(d.get("mean"))
+    lo, hi, level = ci(d.get("confidenceIntervalOfDifferences"))
+    return Section(
+        "Effect",
+        ["Mean of differences", "Difference is", "SD", "SE", "CI lower", "CI upper", "CI level",
+         "R squared"],
+        [[mean, derive_direction(mean, num(s2.get("mean")), num(s1.get("mean")), l2, l1, warn),
+          num(d.get("stdDeviationOfDifferences")), num(d.get("stdErrorOfDifferences")),
+          lo, hi, level, num(d.get("rSquared"))]],
+    )
+
+
+def _effect_mann_whitney(a, model, stats, warn) -> Section:
+    d = _dict(model["differenceOfMedians"])
+    n1, m1, n2, m2 = d.get("n1"), num(d.get("median1")), d.get("n2"), num(d.get("median2"))
+    g1, g2 = _groups(a, stats, n1, m1, n2, m2, "median", warn)
+    return Section(
+        "Effect",
+        ["Group 1", "Median 1", "n 1", "Group 2", "Median 2", "n 2",
+         "Hodges-Lehmann difference", "Difference is"],
+        [[g1, m1, num(n1), g2, m2, num(n2), num(d.get("hodgesLehmannDifference")),
+          derive_direction(num(d.get("actualDifference")), m1, m2, g1, g2, warn)]],
+    )
+
+
+def _effect_wilcoxon(model, stats, warn) -> Section:
+    median = num(_dict(model.get("medianOfDifferences")).get("median"))
+    diff = _dict(_dict(stats).get(DIFFERENCES))
+    ids = diff.get("id")
+    direction = None
+    if isinstance(ids, list) and len(ids) >= 2:
+        l1, l2 = label(ids[0]), label(ids[1])
+        if l1 and l2:
+            direction = f"{l1} - {l2}"
+    dm = num(_dict(diff.get("value")).get("mean"))
+    s1 = num(_dict(_dict(_dict(stats).get("sample1")).get("value")).get("mean"))
+    s2 = num(_dict(_dict(_dict(stats).get("sample2")).get("value")).get("mean"))
+    if dm is not None and s1 is not None and s2 is not None and abs(dm - (s1 - s2)) > _tol(dm, s1, s2):
+        warn("Wilcoxon difference order unverified.")
+    return Section("Effect", ["Median of differences", "Difference is"], [[median, direction]])
+
+
+@register("T_TESTS_AND_NONPARAMETRIC")
+def read_ttest(pf, a, warn):
+    results = a.results
+    params = _dict(a.parameters)
+    design = params.get("experimentalDesign")
+    design = design if isinstance(design, str) else None
+    key = _model_key(design, results)
+    model = results[key]
+    stats = results.get("descriptiveStatistics")
+    opts = _dict(params.get("options"))
+    swap = opts.get("swapDirection")
+    tails = opts.get("pValueTailType")
+    parameters = parameters_section([
+        ("Design", design),
+        ("Tails", _TAILS.get(tails) if isinstance(tails, str) else None),
+        ("Swap direction", swap if isinstance(swap, bool) else None),
+    ])
+    test_rows = []
+    if key in ("welchTTestModel", "unpairedTTestModel"):
+        t = _dict(model["welchTTest" if key == "welchTTestModel" else "unpairedTTest"])
+        name = "Welch's t test" if key == "welchTTestModel" else "Unpaired t test"
+        test_rows.append([name, "t", num(t.get("t")), num(t.get("df")), _p(t.get("pValue"))])
+        vrow = _variance_row(model, warn)
+        if vrow is not None:
+            test_rows.append(vrow)
+        effect = _effect_two_means(a, model, stats, warn)
+    elif key == "pairedTTestModel":
+        t = _dict(model["pairedTTest"])
+        test_rows.append(["Paired t test", "t", num(t.get("t")), num(t.get("df")), _p(t.get("pValue"))])
+        effect = _effect_paired(model, stats, warn)
+    elif key == "mannWhitneyTestModel":
+        t = _dict(model["mannWhitneyTest"])
+        test_rows.append(["Mann-Whitney test", "U", num(t.get("U")), None, _p(t.get("pValue"))])
+        effect = _effect_mann_whitney(a, model, stats, warn)
+    else:
+        t = _dict(model["wilcoxonTest"])
+        test_rows.append(["Wilcoxon signed-rank test", "W", num(t.get("signedRanksSum")), None,
+                          _p(t.get("pValue"))])
+        effect = _effect_wilcoxon(model, stats, warn)
+    sections = []
+    if parameters.rows:
+        sections.append(parameters)
+    sections.append(Section("Test", list(_TEST_COLUMNS), test_rows))
+    sections.append(effect)
+    desc = descriptive_section(stats)
+    if desc.rows:
+        sections.append(desc)
+    return sections
