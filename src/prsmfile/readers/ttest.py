@@ -78,17 +78,23 @@ def _groups(a, stats, n1, v1, n2, v2, key, warn):
     ok1, ok2 = len(m1) == 1 and bool(m1[0]), len(m2) == 1 and bool(m2[0])
     if ok1 and ok2 and m1[0] == m2[0]:
         ok1 = ok2 = False
-    out = []
+    out: list[str | None] = [m1[0] if ok1 else None, m2[0] if ok2 else None]
     inferred = False
-    for i, (ok, m) in enumerate(((ok1, m1), (ok2, m2))):
+    usable = len(a.inputs) >= 2
+    labels = [_input_label(x) for x in a.inputs]
+    for i, ok in enumerate((ok1, ok2)):
         if ok:
-            out.append(m[0])
-        elif len(a.inputs) > i:
-            out.append(_input_label(a.inputs[i]))
-            inferred = True
-        else:
-            out.append(None)
-    if inferred:
+            continue
+        inferred = True
+        if not usable:
+            continue
+        other = out[1 - i]
+        pick = labels[i] if i < len(labels) else None
+        if pick is not None and pick == other:
+            rest = [x for x in labels if x != other]
+            pick = rest[0] if len(rest) == 1 else None
+        out[i] = pick
+    if inferred and usable:
         warn("Group labels inferred from input order.")
     return out[0], out[1]
 
@@ -187,7 +193,9 @@ def read_ttest(pf, a, warn):
     design = params.get("experimentalDesign")
     design = design if isinstance(design, str) else None
     key = _model_key(design, results)
-    model = _dict(results[key])  # only a missing model key raises
+    model = results[key]
+    if not isinstance(model, dict):
+        raise KeyError(key)
     stats = results.get("descriptiveStatistics")
     opts = _dict(params.get("options"))
     swap = opts.get("swapDirection")
@@ -229,14 +237,13 @@ def read_ttest(pf, a, warn):
                _p(b.get("pValue"))]
         if _has_number(row[2:]):
             test_rows.append(row)
-        if _dict(model.get("medianOfDifferences")):
-            effect = _effect_wilcoxon(model, stats, warn)
+        effect = _effect_wilcoxon(model, stats, warn)
     sections = []
     if parameters.rows:
         sections.append(parameters)
     if test_rows:
         sections.append(Section("Test", list(_TEST_COLUMNS), test_rows))
-    if effect is not None and _has_number(effect.rows[0]):
+    if effect is not None and (_has_number(effect.rows[0]) or (key == "wilcoxonTestModel" and effect.rows[0][1] is not None)):
         sections.append(effect)
     desc = descriptive_section(stats)
     if desc.rows:

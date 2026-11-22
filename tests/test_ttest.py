@@ -344,3 +344,41 @@ def test_input_label_keeps_equal_title(tmp_path):
     r = run(tmp_path, res, inputs=(("A", "A"), ("B", "B")))
     e = sec(r, "Effect").rows[0]
     assert e[0] == "A:A" and e[3] == "B:B"
+
+
+def test_fallback_never_reuses_other_groups_label(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    res["descriptiveStatistics"]["sample1"]["value"]["mean"] = 7.5  # group 2 unmatched
+    r = run(tmp_path, res, inputs=(("B", "X"), ("A", "Ctl")))
+    e = sec(r, "Effect").rows[0]
+    assert e[0] == "A:Ctl" and e[3] == "B:X" and INF in r.warnings
+
+
+def test_fallback_conflict_ambiguous_gives_none(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    res["descriptiveStatistics"]["sample1"]["value"]["mean"] = 7.5
+    r = run(tmp_path, res, inputs=(("B", "X"), ("A", "Ctl"), ("C", "Y")))
+    e = sec(r, "Effect").rows[0]
+    assert e[0] == "A:Ctl" and e[3] is None and e[7] is None and INF in r.warnings
+
+
+def test_fallback_needs_two_inputs(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    res["descriptiveStatistics"]["sample2"]["value"]["mean"] = 5.5  # group 1 unmatched
+    r = run(tmp_path, res, inputs=(("A", "Solo"),))
+    e = sec(r, "Effect").rows[0]
+    assert e[0] is None and e[3] == "B:Drug"
+
+
+def test_wilcoxon_without_median_keeps_direction_and_check(tmp_path):
+    res = wilcoxon_results([(1, "x"), (0, "y")], diff_mean=-3.0)
+    del res["wilcoxonTestModel"]["medianOfDifferences"]
+    r = run(tmp_path, res, {"experimentalDesign": "WILCOXON_TEST"})
+    assert sec(r, "Effect").rows == [[None, "B:x - A:y"]]
+    assert "Wilcoxon difference order unverified." in r.warnings
+
+
+def test_non_dict_model_falls_back(tmp_path):
+    r = run(tmp_path, {"status": OK, "welchTTestModel": 5}, {"experimentalDesign": "WELCH_T_TEST"})
+    assert r.kind == "generic"
+    assert "Structured reader failed (KeyError), showing generic values." in r.warnings
