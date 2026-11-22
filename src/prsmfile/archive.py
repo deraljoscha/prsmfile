@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 import math
 import os
@@ -37,18 +38,26 @@ _CHUNK = 1024 * 1024
 _METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
 
 
-def _read_bounded(fp, name: str, limit: int, on_chunk=None) -> bytes:
+def _read_bounded(fp, name: str, limit: int, charge=None, room=None) -> bytes:
     """Read a stream to the end, raising PrismFormatError once it exceeds limit
-    bytes. on_chunk(n) is called with the size of every chunk as it is read."""
+    bytes. charge(delta) is called with the size of each read before it happens
+    and with the shortfall (negative) after it, so bytes of a read that raises
+    stay counted. room() is the number of bytes that may still be read for free;
+    a read never asks for more than room() + 1."""
     parts: list[bytes] = []
     got = 0
     while True:
-        chunk = fp.read(min(_CHUNK, limit + 1 - got))
+        n = min(_CHUNK, limit + 1 - got)
+        if room is not None:
+            n = min(n, room() + 1)
+        if charge is not None:
+            charge(n)
+        chunk = fp.read(n)
+        if charge is not None:
+            charge(len(chunk) - n)
         if not chunk:
             return b"".join(parts)
         got += len(chunk)
-        if on_chunk is not None:
-            on_chunk(len(chunk))
         if got > limit:
             raise PrismFormatError(
                 f"{name}: member larger than the limit of {limit} bytes (MAX_MEMBER_SIZE)"
@@ -56,16 +65,14 @@ def _read_bounded(fp, name: str, limit: int, on_chunk=None) -> bytes:
         parts.append(chunk)
 
 
-def _check_file_size(path) -> None:
+def _check_file_size(path, f) -> None:
     """Reject files above MAX_FILE_SIZE before zipfile parses the member list.
-    Paths use os.stat, file objects must be seekable (zipfile needs that too)."""
+    f is the handle zipfile will read, so the size is that of the same file."""
     try:
-        if hasattr(path, "seek"):
-            pos = path.tell()
-            size = path.seek(0, os.SEEK_END)
-            path.seek(pos)
-        else:
-            size = os.stat(path).st_size
+        pos = f.tell()
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(pos)
     except (OSError, TypeError, ValueError):
         return  # zipfile reports it
     if size > MAX_FILE_SIZE:
@@ -147,22 +154,39 @@ class PrismFile:
         self._total_read = 0  # bytes of all reads, each member counted once (see _charge)
         self._charged: dict[str, int] = {}
         self._budget_lock = threading.Lock()  # PrismFile is otherwise single-threaded
-        _check_file_size(path)
+        self._file = None  # the handle opened here (not one passed in by the caller)
         try:
-            self._zip = zipfile.ZipFile(path)
+            if hasattr(path, "seek"):
+                src = path
+            else:
+                src = self._file = io.open(path, "rb")
+            _check_file_size(path, src)
+            self._zip = zipfile.ZipFile(src)
+        except PrismFormatError:
+            self._close_file()
+            raise
         except zipfile.BadZipFile:
+            self._close_file()
             raise PrismFormatError(f"{path}: not a zip archive (not a .prism file)") from None
         except OSError as e:
+            self._close_file()
             raise PrismFormatError(f"{path}: {e.strerror or e}") from None
         except (UnicodeDecodeError, NotImplementedError, EOFError, zlib.error, RuntimeError) as e:
+            self._close_file()
             raise PrismFormatError(f"{path}: unsupported or damaged zip archive ({e})") from None
+        except BaseException:
+            self._close_file()
+            raise
         try:
             n_members = len(self._zip.infolist())
             if n_members > MAX_MEMBERS:
                 raise PrismFormatError(
                     f"{path}: {n_members} members exceed the limit of {MAX_MEMBERS} (MAX_MEMBERS)"
                 )
-            self._names = set(self._zip.namelist())
+            names = self._zip.namelist()
+            self._names = set(names)
+            if len(names) != len(self._names):
+                raise PrismFormatError(f"{path}: duplicate member names in the archive")
             if "document.json" not in self._names:
                 raise PrismFormatError(f"{path}: document.json missing (not a .prism file)")
             try:
@@ -173,7 +197,7 @@ class PrismFile:
             if not isinstance(doc, dict):
                 raise PrismFormatError(f"{path}: document.json root is not an object")
         except BaseException:
-            self._zip.close()
+            self.close()
             raise
         self._doc = doc
         raw_v = doc.get("formatVersion")
@@ -196,43 +220,53 @@ class PrismFile:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    def _close_file(self) -> None:
+        if self._file is not None:
+            self._file.close()
+
     def close(self) -> None:
         self._zip.close()
+        self._close_file()
 
     def _warn(self, msg: str) -> None:
         if msg not in self.warnings:  # members may be read by several indexes
             self.warnings.append(msg)
 
-    def _charge(self, name: str, got: int) -> None:
-        """Account for got bytes read from name in the current read. A member counts
-        with the most bytes any read of it has used, so repeated access is free."""
-        with self._budget_lock:
-            more = got - self._charged.get(name, 0)
-            if more > 0:
-                self._charged[name] = got
-                self._total_read += more
-            if self._total_read > MAX_TOTAL_SIZE:
-                raise PrismFormatError(
-                    f"{name}: total size read exceeds the limit of "
-                    f"{MAX_TOTAL_SIZE} bytes (MAX_TOTAL_SIZE)"
-                )
-
     def _read_member(self, name: str) -> bytes:
-        """Bytes of a member, at most MAX_MEMBER_SIZE and within MAX_TOTAL_SIZE."""
+        """Bytes of a member, at most MAX_MEMBER_SIZE and within MAX_TOTAL_SIZE.
+        A member counts once: a read is charged only for the bytes beyond what an
+        earlier read of the same member already used."""
         info = self._zip.getinfo(name)
         if info.compress_type not in _METHODS:
             raise PrismFormatError(
                 f"{name}: unsupported compression method {info.compress_type} (only stored and deflate)"
             )
-        seen = 0
+        with self._budget_lock:
+            prior = self._charged.get(name, 0)
+        held = 0  # bytes this read has reserved or read
 
-        def count(n: int) -> None:
-            nonlocal seen
-            seen += n
-            self._charge(name, seen)
+        def charge(delta: int) -> None:
+            nonlocal held
+            with self._budget_lock:
+                before = max(0, held - prior)
+                held += delta
+                self._total_read += max(0, held - prior) - before
+                if delta <= 0 and self._total_read > MAX_TOTAL_SIZE:
+                    raise PrismFormatError(
+                        f"{name}: total size read exceeds the limit of "
+                        f"{MAX_TOTAL_SIZE} bytes (MAX_TOTAL_SIZE)"
+                    )
 
-        with self._zip.open(info) as fp:
-            return _read_bounded(fp, name, MAX_MEMBER_SIZE, count)
+        def room() -> int:
+            with self._budget_lock:
+                return max(0, MAX_TOTAL_SIZE - self._total_read) + max(0, prior - held)
+
+        try:
+            with self._zip.open(info) as fp:
+                return _read_bounded(fp, name, MAX_MEMBER_SIZE, charge, room)
+        finally:
+            with self._budget_lock:
+                self._charged[name] = max(self._charged.get(name, 0), held)
 
     def read_text(self, name: str) -> str | None:
         if _is_opaque(name) or name not in self._names:

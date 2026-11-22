@@ -156,7 +156,7 @@ so nothing is dropped silently.
 - Archives are read with limits against zip bombs: file size 2 GiB and 100,000 members (both
   checked when the file is opened), 512 MiB per member and 4 GiB read in total per opened file
   with each member counted once (checked while reading, so the error names the member and
-  appears on first access). Only stored and deflate members are read. Real Prism files stay far
+  appears on first access). Only stored and deflate members are read, and archives with duplicate member names are rejected. Real Prism files stay far
   below the limits (the largest in the test corpus is 41 MB).
 - Only the five structured families above get dedicated readers; other analyses are generic.
 - For unpaired tests, the stored `swapDirection` flag is not trusted. The direction of a

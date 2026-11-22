@@ -1,4 +1,5 @@
 import json
+import os
 import zipfile
 
 import pytest
@@ -618,6 +619,7 @@ def test_concurrent_reads_share_budget_consistently(tmp_path, monkeypatch):
         for t in ts:
             t.join()
         assert pf._total_read == before + 8 * 100_000
+        assert all(pf._charged[n] == 100_000 for n in members)
 
 
 def test_lying_header_cannot_bypass_member_limit(tmp_path, monkeypatch):
@@ -629,7 +631,8 @@ def test_lying_header_cannot_bypass_member_limit(tmp_path, monkeypatch):
         with pytest.raises(PrismFormatError) as e:
             pf.read_text("bomb.json")
     assert "bomb.json" in str(e.value) and "MAX_MEMBER_SIZE" in str(e.value)
-    assert pf._total_read < 1100  # 1001 bytes of the bomb plus document.json
+    assert pf._charged["bomb.json"] == 1001  # exactly the bytes read, whatever the header says
+    assert pf._total_read == 1001 + pf._charged["document.json"]
 
 
 def test_failed_read_counts_toward_total(tmp_path, monkeypatch):
@@ -639,7 +642,7 @@ def test_failed_read_counts_toward_total(tmp_path, monkeypatch):
         with pytest.raises(PrismFormatError):
             pf.read_text("a.json")  # 501 bytes read, then rejected
         spent = pf._total_read
-        assert spent > 0
+        assert pf._charged["a.json"] == 501
         monkeypatch.setattr(_archive, "MAX_MEMBER_SIZE", 10_000)
         monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", spent + 100)
         with pytest.raises(PrismFormatError) as e:
@@ -669,3 +672,78 @@ def test_corrupt_member_still_warns(tmp_path):
     with prsmfile.open(p) as pf:
         assert pf.read_json("x.json") is None
         assert any("x.json" in w for w in pf.warnings)
+
+
+def test_duplicate_member_names_rejected(tmp_path):
+    p = tmp_path / "d.prism"
+    with pytest.warns(UserWarning):
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("document.json", '{"formatVersion": "1-0"}')
+            z.writestr("a.json", "{}")
+            z.writestr("a.json", "{}")
+    with pytest.raises(PrismFormatError) as e:
+        prsmfile.open(p)
+    assert "duplicate" in str(e.value)
+
+
+def test_crc_error_still_charges_the_bytes_read(tmp_path):
+    p = _mem_zip(tmp_path, {"x.json": " " * 2000}, zipfile.ZIP_DEFLATED)
+    _patch_cd(p, "x.json", crc=1)
+    with prsmfile.open(p) as pf:
+        assert pf.read_text("x.json") is None  # warning, as in 0.1.0
+        assert pf._charged["x.json"] >= 2000
+        assert pf._total_read >= 2000
+
+
+def test_budget_overshoot_is_one_byte(tmp_path, monkeypatch):
+    mib = 1024 * 1024
+    monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", mib + mib // 2)
+    p = _mem_zip(tmp_path, {"big.json": " " * (3 * mib)})
+    with prsmfile.open(p) as pf:
+        with pytest.raises(PrismFormatError) as e:
+            pf.read_text("big.json")
+    assert "MAX_TOTAL_SIZE" in str(e.value)
+    assert pf._total_read <= _archive.MAX_TOTAL_SIZE + 1
+
+
+def test_member_filling_the_budget_exactly_is_fine(tmp_path, monkeypatch):
+    p = _mem_zip(tmp_path, {"a.json": " " * 1500})
+    with prsmfile.open(p) as pf:
+        monkeypatch.setattr(_archive, "MAX_TOTAL_SIZE", pf._total_read + 1500)
+        assert len(pf.read_text("a.json")) == 1500
+
+
+def test_file_is_opened_once_and_closed(tmp_path, monkeypatch):
+    p = _mem_zip(tmp_path, {"a.json": "{}"})
+    seen = []
+    orig = zipfile.ZipFile.__init__
+
+    def spy(self, file, *a, **k):
+        seen.append(file)
+        return orig(self, file, *a, **k)
+
+    monkeypatch.setattr(zipfile.ZipFile, "__init__", spy)
+    pf = prsmfile.open(p)
+    assert len(seen) == 1 and not isinstance(seen[0], (str, os.PathLike))  # same handle as the size check
+    handle = seen[0]
+    assert not handle.closed
+    pf.close()
+    assert handle.closed
+
+
+def test_file_object_whose_seek_returns_none(tmp_path):
+    p = _mem_zip(tmp_path, {"a.json": '{"k": 1}'})
+
+    class Quirky:  # like SpooledTemporaryFile before 3.11: seek() returns None
+        def __init__(self, raw):
+            self._f = io.BytesIO(raw)
+            self.read, self.tell = self._f.read, self._f.tell
+
+        def seek(self, *a):
+            self._f.seek(*a)
+
+        def seekable(self):
+            return True
+
+    with prsmfile.open(Quirky(p.read_bytes())) as pf:
+        assert pf.read_json("a.json") == {"k": 1}
