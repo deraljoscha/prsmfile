@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import sys
 import urllib.request
@@ -48,7 +49,7 @@ def main(argv=None) -> int:
             with urllib.request.urlopen(entry["download_url"], timeout=60) as resp, open(tmp, "wb") as out:
                 while chunk := resp.read(1 << 20):
                     out.write(chunk)
-        except OSError as e:
+        except (OSError, http.client.HTTPException) as e:  # IncompleteRead is an HTTPException
             print(f"FAILED   {entry['file']}: {e}", file=sys.stderr)
             tmp.unlink(missing_ok=True)
             failed += 1

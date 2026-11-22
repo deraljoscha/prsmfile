@@ -2,8 +2,12 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -30,6 +34,23 @@ jobs:
           if [ -f examples/cc0-figure4.prism ]; then
             "$RUNNER_TEMP/smoke/bin/prsmfile" examples/cc0-figure4.prism --list
           fi
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the sdist, unpack it and run its tests
+        run: |
+          python -m pip install build pytest
+          python -m build --sdist --outdir "$RUNNER_TEMP/sdist" .
+          mkdir "$RUNNER_TEMP/unpacked"
+          tar xzf "$RUNNER_TEMP/sdist"/*.tar.gz -C "$RUNNER_TEMP/unpacked"
+          cd "$RUNNER_TEMP"/unpacked/prsmfile-*
+          python -m pip install .
+          python -m pytest -q -p no:cacheprovider
 
   corpus:
     if: github.event_name == 'workflow_dispatch'
