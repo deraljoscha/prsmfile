@@ -49,33 +49,48 @@ def _labelled(stats: dict, name: str):
     return (label(id_) or None if isinstance(id_, (dict, list)) else None), _dict(e.get("value"))
 
 
+def _raw_num(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
 def _match_label(stats: dict, n, key: str, val) -> list[str]:
-    """Labels of the non-`differences` entries whose (n, key) equals (n, val) exactly."""
-    n, val = num(n), num(val)
-    if n is None or val is None:
+    """Labels of the non-`differences` entries whose (n, key) equals (n, val): the raw
+    stored values, exact =="""
+    if not (_raw_num(n) and _raw_num(val)):
         return []
     out = []
     for id_, value in entries({k: v for k, v in _dict(stats).items() if k != DIFFERENCES}):
         v = _dict(value)
-        if num(v.get("n")) == n and num(v.get(key)) == val:
+        if _raw_num(v.get("n")) and _raw_num(v.get(key)) and v["n"] == n and v[key] == val:
             out.append(label(id_))
     return out
 
 
 def _input_label(item) -> str:
     ltr, title = item
-    return ltr if title == ltr else f"{ltr}:{title}"
+    return f"{ltr}:{title}"
 
 
 def _groups(a, stats, n1, v1, n2, v2, key, warn):
-    """Group labels by exact (n, value) match; else from input order; else None."""
+    """Group labels per group: a unique non-empty exact (n, value) match, else the
+    input at that position (with a warning), else None."""
     m1, m2 = _match_label(stats, n1, key, v1), _match_label(stats, n2, key, v2)
-    if len(m1) == 1 and len(m2) == 1 and m1[0] != m2[0]:
-        return m1[0] or None, m2[0] or None
-    if len(a.inputs) >= 2:
+    ok1, ok2 = len(m1) == 1 and bool(m1[0]), len(m2) == 1 and bool(m2[0])
+    if ok1 and ok2 and m1[0] == m2[0]:
+        ok1 = ok2 = False
+    out = []
+    inferred = False
+    for i, (ok, m) in enumerate(((ok1, m1), (ok2, m2))):
+        if ok:
+            out.append(m[0])
+        elif len(a.inputs) > i:
+            out.append(_input_label(a.inputs[i]))
+            inferred = True
+        else:
+            out.append(None)
+    if inferred:
         warn("Group labels inferred from input order.")
-        return _input_label(a.inputs[0]), _input_label(a.inputs[1])
-    return None, None
+    return out[0], out[1]
 
 
 def _variance_row(model: dict, warn):
@@ -92,9 +107,10 @@ def _variance_row(model: dict, warn):
 
 
 def _effect_two_means(a, model, stats, warn) -> Section:
-    d = _dict(model["differenceOfMeans"])
-    n1, m1, n2, m2 = d.get("n1"), num(d.get("mean1")), d.get("n2"), num(d.get("mean2"))
-    g1, g2 = _groups(a, stats, n1, m1, n2, m2, "mean", warn)
+    d = _dict(model.get("differenceOfMeans"))
+    n1, n2 = d.get("n1"), d.get("n2")
+    g1, g2 = _groups(a, stats, n1, d.get("mean1"), n2, d.get("mean2"), "mean", warn)
+    m1, m2 = num(d.get("mean1")), num(d.get("mean2"))
     diff = num(d.get("difference"))
     lo, hi, level = ci(d.get("confidenceIntervalOfDifference"))
     return Section(
@@ -108,7 +124,7 @@ def _effect_two_means(a, model, stats, warn) -> Section:
 
 
 def _effect_paired(model, stats, warn) -> Section:
-    d = _dict(model["meanOfDifferences"])
+    d = _dict(model.get("meanOfDifferences"))
     l1, s1 = _labelled(stats, "sample1")
     l2, s2 = _labelled(stats, "sample2")
     mean = num(d.get("mean"))
@@ -124,9 +140,10 @@ def _effect_paired(model, stats, warn) -> Section:
 
 
 def _effect_mann_whitney(a, model, stats, warn) -> Section:
-    d = _dict(model["differenceOfMedians"])
-    n1, m1, n2, m2 = d.get("n1"), num(d.get("median1")), d.get("n2"), num(d.get("median2"))
-    g1, g2 = _groups(a, stats, n1, m1, n2, m2, "median", warn)
+    d = _dict(model.get("differenceOfMedians"))
+    n1, n2 = d.get("n1"), d.get("n2")
+    g1, g2 = _groups(a, stats, n1, d.get("median1"), n2, d.get("median2"), "median", warn)
+    m1, m2 = num(d.get("median1")), num(d.get("median2"))
     return Section(
         "Effect",
         ["Group 1", "Median 1", "n 1", "Group 2", "Median 2", "n 2",
@@ -153,6 +170,16 @@ def _effect_wilcoxon(model, stats, warn) -> Section:
     return Section("Effect", ["Median of differences", "Difference is"], [[median, direction]])
 
 
+def _has_number(row) -> bool:
+    return any(_raw_num(c) or isinstance(c, PValue) and c.value is not None for c in row)
+
+
+def _test_row(block, name, stat, stat_key):
+    b = _dict(block)
+    row = [name, stat, num(b.get(stat_key)), num(b.get("df")), _p(b.get("pValue"))]
+    return row if _has_number(row[2:]) else None
+
+
 @register("T_TESTS_AND_NONPARAMETRIC")
 def read_ttest(pf, a, warn):
     results = a.results
@@ -160,7 +187,7 @@ def read_ttest(pf, a, warn):
     design = params.get("experimentalDesign")
     design = design if isinstance(design, str) else None
     key = _model_key(design, results)
-    model = results[key]
+    model = _dict(results[key])  # only a missing model key raises
     stats = results.get("descriptiveStatistics")
     opts = _dict(params.get("options"))
     swap = opts.get("swapDirection")
@@ -171,32 +198,46 @@ def read_ttest(pf, a, warn):
         ("Swap direction", swap if isinstance(swap, bool) else None),
     ])
     test_rows = []
+    effect = None
     if key in ("welchTTestModel", "unpairedTTestModel"):
-        t = _dict(model["welchTTest" if key == "welchTTestModel" else "unpairedTTest"])
-        name = "Welch's t test" if key == "welchTTestModel" else "Unpaired t test"
-        test_rows.append([name, "t", num(t.get("t")), num(t.get("df")), _p(t.get("pValue"))])
+        welch = key == "welchTTestModel"
+        row = _test_row(model.get("welchTTest" if welch else "unpairedTTest"),
+                        "Welch's t test" if welch else "Unpaired t test", "t", "t")
+        if row:
+            test_rows.append(row)
         vrow = _variance_row(model, warn)
         if vrow is not None:
             test_rows.append(vrow)
-        effect = _effect_two_means(a, model, stats, warn)
+        if _dict(model.get("differenceOfMeans")):
+            effect = _effect_two_means(a, model, stats, warn)
     elif key == "pairedTTestModel":
-        t = _dict(model["pairedTTest"])
-        test_rows.append(["Paired t test", "t", num(t.get("t")), num(t.get("df")), _p(t.get("pValue"))])
-        effect = _effect_paired(model, stats, warn)
+        row = _test_row(model.get("pairedTTest"), "Paired t test", "t", "t")
+        if row:
+            test_rows.append(row)
+        if _dict(model.get("meanOfDifferences")):
+            effect = _effect_paired(model, stats, warn)
     elif key == "mannWhitneyTestModel":
-        t = _dict(model["mannWhitneyTest"])
-        test_rows.append(["Mann-Whitney test", "U", num(t.get("U")), None, _p(t.get("pValue"))])
-        effect = _effect_mann_whitney(a, model, stats, warn)
+        b = _dict(model.get("mannWhitneyTest"))
+        row = ["Mann-Whitney test", "U", num(b.get("U")), None, _p(b.get("pValue"))]
+        if _has_number(row[2:]):
+            test_rows.append(row)
+        if _dict(model.get("differenceOfMedians")):
+            effect = _effect_mann_whitney(a, model, stats, warn)
     else:
-        t = _dict(model["wilcoxonTest"])
-        test_rows.append(["Wilcoxon signed-rank test", "W", num(t.get("signedRanksSum")), None,
-                          _p(t.get("pValue"))])
-        effect = _effect_wilcoxon(model, stats, warn)
+        b = _dict(model.get("wilcoxonTest"))
+        row = ["Wilcoxon signed-rank test", "W", num(b.get("signedRanksSum")), None,
+               _p(b.get("pValue"))]
+        if _has_number(row[2:]):
+            test_rows.append(row)
+        if _dict(model.get("medianOfDifferences")):
+            effect = _effect_wilcoxon(model, stats, warn)
     sections = []
     if parameters.rows:
         sections.append(parameters)
-    sections.append(Section("Test", list(_TEST_COLUMNS), test_rows))
-    sections.append(effect)
+    if test_rows:
+        sections.append(Section("Test", list(_TEST_COLUMNS), test_rows))
+    if effect is not None and _has_number(effect.rows[0]):
+        sections.append(effect)
     desc = descriptive_section(stats)
     if desc.rows:
         sections.append(desc)

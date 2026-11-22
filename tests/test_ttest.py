@@ -264,3 +264,83 @@ def test_missing_design_infers_model(tmp_path):
     assert r.kind == "structured"
     assert sec(r, "Test").rows[0][0] == "Welch's t test"
     assert "Parameters" not in [s.title for s in r.sections]  # nothing stored: section omitted
+
+
+INF = "Group labels inferred from input order."
+
+
+def test_fallback_per_group(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    res["descriptiveStatistics"]["sample1"]["value"]["mean"] = 7.5  # group 2 unmatched
+    r = run(tmp_path, res, inputs=(("A", "In1"), ("B", "In2")))
+    e = sec(r, "Effect").rows[0]
+    assert e[0] == "A:Ctl" and e[3] == "B:In2"
+    assert INF in r.warnings
+
+
+def test_fallback_per_group_without_inputs(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    res["descriptiveStatistics"]["sample1"]["value"]["mean"] = 7.5
+    r = run(tmp_path, res, inputs=())
+    e = sec(r, "Effect").rows[0]
+    assert e[0] == "A:Ctl" and e[3] is None and e[7] is None
+
+
+def test_empty_label_match_is_unmatched(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    res["descriptiveStatistics"]["sample1"]["id"] = {}
+    r = run(tmp_path, res, inputs=(("A", "In1"), ("B", "In2")))
+    e = sec(r, "Effect").rows[0]
+    assert e[0] == "A:Ctl" and e[3] == "B:In2" and INF in r.warnings
+
+
+def test_match_compares_raw_values(tmp_path):
+    big = 2**53
+    res = welch_results(5.0, 7.0, 2.0)
+    res["welchTTestModel"]["differenceOfMeans"]["mean1"] = big + 1
+    res["descriptiveStatistics"]["sample2"]["value"]["mean"] = big
+    r = run(tmp_path, res, inputs=(("A", "In1"), ("B", "In2")))
+    assert sec(r, "Effect").rows[0][0] == "A:In1" and INF in r.warnings
+
+
+def test_missing_test_block_keeps_effect(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    del res["welchTTestModel"]["welchTTest"]
+    r = run(tmp_path, res)
+    assert r.kind == "structured"
+    assert [s.title for s in r.sections] == ["Parameters", "Effect", "Descriptive statistics"]
+
+
+def test_missing_effect_block_keeps_test(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    del res["welchTTestModel"]["differenceOfMeans"]
+    r = run(tmp_path, res)
+    assert r.kind == "structured"
+    assert [s.title for s in r.sections] == ["Parameters", "Test", "Descriptive statistics"]
+
+
+def test_empty_blocks_omit_sections(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    res["welchTTestModel"]["welchTTest"] = {"status": "INVALID"}
+    res["welchTTestModel"]["differenceOfMeans"] = {}
+    r = run(tmp_path, res)
+    assert [s.title for s in r.sections] == ["Parameters", "Descriptive statistics"]
+
+
+def test_paired_and_wilcoxon_missing_blocks(tmp_path):
+    res = paired_results(3.0)
+    del res["pairedTTestModel"]["meanOfDifferences"]
+    r = run(tmp_path, res, {"experimentalDesign": "PAIRED_T_TEST"})
+    assert "Effect" not in [s.title for s in r.sections] and r.kind == "structured"
+    res = wilcoxon_results([(1, "x"), (0, "y")])
+    del res["wilcoxonTestModel"]["wilcoxonTest"]
+    r = run(tmp_path, res, {"experimentalDesign": "WILCOXON_TEST"})
+    assert "Test" not in [s.title for s in r.sections] and r.kind == "structured"
+
+
+def test_input_label_keeps_equal_title(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    del res["descriptiveStatistics"]
+    r = run(tmp_path, res, inputs=(("A", "A"), ("B", "B")))
+    e = sec(r, "Effect").rows[0]
+    assert e[0] == "A:A" and e[3] == "B:B"
