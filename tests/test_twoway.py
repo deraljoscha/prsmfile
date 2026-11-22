@@ -1,0 +1,212 @@
+import prsmfile
+from prsmfile import PValue, read_analysis
+from tests.builder import PrismBuilder
+from tests.helpers import assert_sections_well_formed
+
+CLS = "TWO_WAY_ANOVA"
+OK = {"error": "VALID", "warning": []}
+ORD, GLM, REML = "ordinaryAnovaModel", "repeatedMeasuresGlmAnovaModel", "repeatedMeasuresRemlAnovaModel"
+
+
+def pobj(v, sig=True):
+    return {"value": v, "level": 0.05, "isSignificant": sig, "state": "P_VALUE_EQUAL"}
+
+
+def pv(v, sig=True):
+    return PValue(value=v, alpha=0.05, significant=sig, bound=False)
+
+
+def cellid(ridx, rtitle, cidx, ctitle):
+    row = {"idx": ridx}
+    if rtitle is not None:
+        row["title"] = rtitle
+    col = {"uid": f"U{cidx}", "idx": cidx}
+    if ctitle is not None:
+        col["title"] = ctitle
+    return {"row": row, "col": col}
+
+
+def run(tmp_path, results, params=None):
+    params = {"experimentalDesign": "ORDINARY_ANOVA",
+              "repeatedMeasures": {"method": "OPTIONAL", "assumeSphericity": False},
+              "postTests": {"type": "PAIRWISE_TESTS",
+                            "pairwiseTests": {"meansDesignType": "COMPARE_CELLS_BY_COLUMNS_WITHIN_ROWS_SINGLE_FAMILY"}},
+              **(params or {})}
+    b = PrismBuilder()
+    b.add_analysis("W", CLS, params, results, inputs=(("A", "WT"), ("B", "KO")))
+    with prsmfile.open(b.save(tmp_path / "w.prism")) as pf:
+        r = read_analysis(pf, pf.analyses()[0])
+    assert_sections_well_formed(r)
+    return r
+
+
+def sec(r, title):
+    (s,) = [s for s in r.sections if s.title == title]
+    return s
+
+
+def titles(r):
+    return [s.title for s in r.sections]
+
+
+def node(ss, df, ms, variation=None, f=None, p=0.01):
+    n = {"ss": ss, "df": df, "ms": ms}
+    if variation is not None:
+        n["variation"] = variation
+    if f is not None:
+        n["fTest"] = {"status": "VALID", "f": f, "dfNumerator": 1.0, "dfDenominator": 6.0, "pValue": pobj(p)}
+    return n
+
+
+def res(model, key=ORD, **extra):
+    m = {"status": "VALID", **model}
+    m.update(extra)
+    return {"status": OK, key: m}
+
+
+def test_ordinary_rows_order(tmp_path):
+    table = {"rowFactor": node(1, 1, 1, 10.0, 5.0), "colFactor": node(2, 2, 1, 20.0, 6.0),
+             "rowFactorVsColFactor": node(3, 2, 1.5, 30.0, 7.0), "residual": node(4, 12, 0.3, 40.0)}
+    r = run(tmp_path, res({"anovaTable": table}))
+    assert r.kind == "structured" and r.warnings == []
+    t = sec(r, "ANOVA")
+    assert t.columns == ["Source", "SS", "df", "MS", "% of total", "F", "DFn", "DFd", "P"]
+    assert [row[0] for row in t.rows] == ["Interaction", "Row factor", "Column factor", "Residual"]
+    assert t.rows[1] == ["Row factor", 1.0, 1.0, 1.0, 10.0, 5.0, 1.0, 6.0, pv(0.01)]
+    assert t.rows[3][5:] == [None, None, None, None]
+
+
+def test_glm_subject_terms(tmp_path):
+    table = {"residual": node(4, 3, 1.0, 4.0),
+             "matchedFactorVsColFactor": node(2, 3, 0.7, 2.0),
+             "matchedFactorVsRowFactor": node(1, 3, 0.3, 1.0),
+             "matchedFactor": node(9, 3, 3.0, 9.0, 2.0),
+             "rowFactor": node(1, 1, 1, 10.0, 5.0), "total": {"ss": 20.0, "df": 11.0}}
+    r = run(tmp_path, res({"anovaTable": table}, GLM), {"experimentalDesign": "REPEATED_MEASURES_BY_BOTH_FACTORS"})
+    names = [row[0] for row in sec(r, "ANOVA").rows]
+    assert names == ["Row factor", "Subjects", "Subjects x Row factor", "Subjects x Column factor",
+                     "Residual", "Total"]
+
+
+def test_unknown_anova_keys_last_with_key_name(tmp_path):
+    table = {"zeta": node(1, 1, 1), "rowFactor": node(1, 1, 1), "alpha": node(2, 1, 2), "total": node(3, 1, 3)}
+    r = run(tmp_path, res({"anovaTable": table}))
+    assert [row[0] for row in sec(r, "ANOVA").rows] == ["Row factor", "Total", "zeta", "alpha"]
+
+
+def reml_model():
+    fe = {k: {"fTest": {"status": "VALID", "f": f, "dfNumerator": 1.0, "dfDenominator": 9.0, "pValue": pobj(0.03)}}
+          for k, f in (("rowFactorVsColFactor", 7.7), ("colFactor", 6.6), ("rowFactor", 5.1))}
+    return {"fixedEffects": fe,
+            "randomEffects": {"extra": {"sd": 0.1, "variance": 0.01},
+                              "residual": {"sd": 0.5, "variance": 0.25},
+                              "matchedFactor": {"sd": 0.8, "variance": 0.64}},
+            "matchingTest": {"status": "VALID", "chiSquared": 2.7, "df": 1.0, "pValue": pobj(0.09, False)},
+            "differenceBetweenColMeans": {"mean1": 1.0, "difference": 0.5,
+                                          "differenceCI": {"lower": 0.1, "upper": 0.9, "level": 0.05}}}
+
+
+def test_reml_fixed_and_random(tmp_path):
+    r = run(tmp_path, res(reml_model(), REML), {"experimentalDesign": "REPEATED_MEASURES_BY_ROWS",
+            "repeatedMeasures": {"method": "REML"}})
+    assert r.kind == "structured" and r.warnings == []
+    assert "ANOVA" not in titles(r)
+    f = sec(r, "Fixed effects")
+    assert f.columns == ["Source", "F", "DFn", "DFd", "P"]
+    assert [row[0] for row in f.rows] == ["Row factor", "Column factor", "Interaction"]
+    assert f.rows[0][1] == 5.1
+    rnd = sec(r, "Random effects")
+    assert rnd.columns == ["Source", "SD", "Variance"]
+    assert rnd.rows == [["Subject", 0.8, 0.64], ["Residual", 0.5, 0.25], ["extra", 0.1, 0.01]]
+    m = sec(r, "Matching")
+    assert m.columns == ["Chi-square", "df", "P"] and m.rows == [[2.7, 1.0, pv(0.09, False)]]
+    other = [row[0] for row in sec(r, "Other values").rows]
+    assert not any(p.startswith("randomEffects") for p in other)
+    assert ["differenceBetweenColMeans.differenceCI.level", 0.05] in sec(r, "Other values").rows
+
+
+def test_reml_without_matching_test(tmp_path):
+    m = reml_model()
+    del m["matchingTest"]
+    r = run(tmp_path, res(m, REML))
+    assert "Matching" not in titles(r)
+
+
+def comp(diff):
+    return {"status": "VALID", "meansDifference": diff, "meansDifferenceSE": 0.5, "statistic": 2.0, "df": 6.0,
+            "meansDifferenceCI": {"lower": -1.0, "upper": 1.0, "level": 95.0}, "pValueAdjusted": pobj(0.2, False)}
+
+
+def test_cell_labels(tmp_path):
+    id1, id2 = cellid(0, "Day 1", 0, "WT"), cellid(0, "Day 1", 1, "KO")
+    mc = {"status": "VALID", "method": "Sidak",
+          "tests": PrismBuilder.keyed([(id1, PrismBuilder.keyed([(id2, comp(0.5))]))])}
+    r = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}, "multipleComparisons": mc}))
+    s = sec(r, "Multiple comparisons (Sidak)")
+    assert s.rows[0][0] == "row 1:Day 1 A:WT vs row 1:Day 1 B:KO"
+    assert ["Method", "Sidak"] in sec(r, "Parameters").rows
+
+
+def test_other_values_keep_level(tmp_path):
+    m = {"anovaTable": {"rowFactor": node(1, 1, 1)},
+         "differenceBetweenRowMeans": {"differenceCI": {"lower": 0.1, "upper": 0.2, "level": 0.05}},
+         "interaction": {"interaction": 0.3},
+         "randomEffects": {"matchedFactor": {"sd": 1.0}},
+         "dataSummary": {"rowCount": 2, "colCount": 3, "isBalancedDesign": True}}
+    r = run(tmp_path, res(m))
+    o = sec(r, "Other values")
+    assert o.columns == ["Path", "Value"]
+    assert ["differenceBetweenRowMeans.differenceCI.level", 0.05] in o.rows
+    assert ["interaction.interaction", 0.3] in o.rows
+    assert ["randomEffects.matchedFactor.sd", 1.0] in o.rows
+    d = sec(r, "Data summary")
+    assert d.columns == ["Name", "Value"]
+    assert d.rows == [["rowCount", 2.0], ["colCount", 3.0], ["isBalancedDesign", True]]
+
+
+def test_sphericity_parameter(tmp_path):
+    m = {"factorNames": {"rowFactor": "Region", "colFactor": "Genotype"},
+         "anovaTable": {"rowFactor": node(1, 1, 1)}}
+    p = {"experimentalDesign": "REPEATED_MEASURES_BY_BOTH_FACTORS",
+         "repeatedMeasures": {"method": "OPTIONAL", "assumeSphericity": True}}
+    r = run(tmp_path, res(m, GLM), p)
+    assert sec(r, "Parameters").rows == [
+        ["Design", "REPEATED_MEASURES_BY_BOTH_FACTORS"], ["Repeated measures method", "OPTIONAL"],
+        ["Assume sphericity", True],
+        ["Post test design", "COMPARE_CELLS_BY_COLUMNS_WITHIN_ROWS_SINGLE_FAMILY"],
+        ["Row factor", "Region"], ["Column factor", "Genotype"]]
+
+
+def test_sphericity_false_is_kept(tmp_path):
+    r = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}}))
+    assert ["Assume sphericity", False] in sec(r, "Parameters").rows
+
+
+def test_missing_model_falls_back(tmp_path):
+    r = run(tmp_path, {"status": OK, "dataSummary": {}})
+    assert r.kind == "generic"
+    assert "Structured reader failed (KeyError), showing generic values." in r.warnings
+
+
+def test_non_dict_model_falls_back(tmp_path):
+    r = run(tmp_path, {"status": OK, ORD: 3})
+    assert r.kind == "generic"
+
+
+def test_garbage_values_do_not_raise(tmp_path):
+    m = {"anovaTable": {"rowFactor": {"ss": "undefined", "fTest": "x"}, "residual": 3, "other": []},
+         "multipleComparisons": {"method": 7, "tests": {"k": {"id": {}, "value": {"h": {"id": {}, "value": 5}}}}},
+         "dataSummary": 5, "factorNames": 4}
+    r = run(tmp_path, res(m), {"repeatedMeasures": 3, "postTests": []})
+    assert r.kind == "structured"
+
+
+def test_garbage_reml_does_not_raise(tmp_path):
+    r = run(tmp_path, res({"fixedEffects": {"rowFactor": 5, "colFactor": {"fTest": 2}},
+                           "randomEffects": {"matchedFactor": 1}, "matchingTest": "x"}, REML))
+    assert r.kind == "structured"
+
+
+def test_no_tests_has_no_comparisons(tmp_path):
+    r = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}}))
+    assert "Multiple comparisons" not in titles(r)
