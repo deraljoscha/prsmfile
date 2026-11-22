@@ -13,10 +13,19 @@ documented by the vendor; `docs/format.md` records what was observed in 75 publi
 ## Install
 
 ```
+pip install prsmfile
+```
+
+To install the development version from GitHub instead:
+
+```
 pip install git+https://github.com/deraljoscha/prsmfile
 ```
 
-This will become `pip install prsmfile` once the package is published.
+## Stability
+
+The `.prism` format is undocumented and reverse engineered. The Python API, the CLI output and
+the JSON and CSV layout may change in 0.x releases. Breaking changes are listed in `CHANGELOG.md`.
 
 ## Command line
 
@@ -170,6 +179,14 @@ Without a `corpus/` directory the corpus tests are skipped.
 
 To add a reader for another analysis class, see `docs/readers.md`. The file format notes are in
 `docs/format.md`. Please attach only files you may share, and never real personal data.
+
+## Reporting problems
+
+Open an issue with the Prism version and, if possible, a file with invented data.
+
+## Citing
+
+See `CITATION.cff`.
 
 ## License
 

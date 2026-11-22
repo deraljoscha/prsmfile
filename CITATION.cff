@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+title: prsmfile
+message: If you use this software, please cite it using the metadata in this file.
+type: software
+authors:
+  - alias: deraljoscha
+version: 0.1.0
+date-released: 2026-11-22
+license: MIT
+repository-code: https://github.com/deraljoscha/prsmfile
+abstract: Read the results and data tables stored in GraphPad Prism .prism files without Prism, as text, JSON or CSV.
+keywords:
+  - GraphPad Prism
+  - prism file format
+  - statistics
+  - data extraction
+  - reproducibility

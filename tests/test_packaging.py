@@ -55,6 +55,12 @@ def test_manifest_in_ships_test_helpers():
         assert line in text.splitlines()
 
 
+def test_manifest_in_ships_project_files():
+    lines = (ROOT / "MANIFEST.in").read_text().splitlines()
+    for name in ("CHANGELOG.md", "CITATION.cff", "SECURITY.md"):
+        assert f"include {name}" in lines
+
+
 def test_typed_marker_and_single_version_source():
     assert (ROOT / "src" / "prsmfile" / "py.typed").is_file()
     py = (ROOT / "pyproject.toml").read_text()
