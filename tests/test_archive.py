@@ -150,7 +150,7 @@ def test_alerts_collected_and_deduped(tmp_path):
     )
     with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
         a = pf.analyses()[0]
-    assert a.alerts == ["Warning: data not normal"]
+    assert a.alerts == ["Warning: data\nnot normal"]
 
 
 def test_media_never_read(tmp_path, monkeypatch):
@@ -177,3 +177,167 @@ def test_media_never_read(tmp_path, monkeypatch):
         assert pf.read_text("media/pic.svg") is None
         assert pf.read_json("misc/x.bin") is None
     assert opened and not any(n.startswith(("media/", "misc/")) for n in opened)
+
+
+# ---- review fix round ----
+
+def _patch_member_bytes(path, member, fn):
+    import struct
+    raw = bytearray(path.read_bytes())
+    with zipfile.ZipFile(path) as z:
+        info = z.getinfo(member)
+    off = info.header_offset
+    nlen, elen = struct.unpack("<HH", raw[off + 26:off + 30])
+    start = off + 30 + nlen + elen
+    raw[start:start + info.compress_size] = fn(bytes(raw[start:start + info.compress_size]))
+    path.write_bytes(bytes(raw))
+
+
+def test_invalid_utf8_member_name(tmp_path):
+    p = PrismBuilder().save(tmp_path / "a.prism")
+    with zipfile.ZipFile(p, "a") as z:
+        zi = zipfile.ZipInfo("aaaa")
+        zi.flag_bits |= 0x800
+        z.writestr(zi, b"x")
+    raw = p.read_bytes()
+    assert raw.count(b"aaaa") == 2
+    raw = bytearray(raw.replace(b"aaaa", b"\xff\xfeaa"))
+    for sig, flag_off, name_off in ((b"PK\x03\x04", 6, 30), (b"PK\x01\x02", 8, 46)):
+        i = raw.rfind(sig, 0, raw.rfind(b"\xff\xfeaa") if sig == b"PK\x03\x04" else len(raw))
+        while bytes(raw[i + name_off:i + name_off + 4]) != b"\xff\xfeaa":
+            i = raw.find(sig, i + 1)
+        raw[i + flag_off + 1] |= 0x08  # 0x800 utf-8 flag
+    p.write_bytes(bytes(raw))
+    with pytest.raises(PrismFormatError) as e:
+        prsmfile.open(p)
+    assert str(p) in str(e.value)
+
+
+def test_unsupported_zip_feature(tmp_path, monkeypatch):
+    p = PrismBuilder().save(tmp_path / "a.prism")
+
+    def boom(self, *a, **k):
+        raise NotImplementedError("compression type 99")
+
+    monkeypatch.setattr(zipfile.ZipFile, "__init__", boom)
+    with pytest.raises(PrismFormatError) as e:
+        prsmfile.open(p)
+    assert str(p) in str(e.value)
+
+
+def test_permission_denied(tmp_path):
+    import os
+    if os.geteuid() == 0:
+        pytest.skip("root ignores file modes")
+    p = PrismBuilder().save(tmp_path / "a.prism")
+    p.chmod(0)
+    try:
+        with pytest.raises(PrismFormatError) as e:
+            prsmfile.open(p)
+        assert str(p) in str(e.value)
+    finally:
+        p.chmod(0o600)
+
+
+def test_recursion_error_member(tmp_path):
+    b = PrismBuilder()
+    bad = b.add_analysis("Bad", "ONE_WAY_ANOVA", {}, {"status": {}})
+    b.add_analysis("Good", "ONE_WAY_ANOVA", {}, {"status": {}})
+    b.add_member(f"analyses/{bad}/sheet.json", b'{"a":' * 200000)
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        assert [x.title for x in pf.analyses()] == ["Good"]
+        assert any(f"analyses/{bad}/sheet.json" in w for w in pf.warnings)
+        assert f"Skipped analysis {bad}: unreadable sheet.json" in pf.warnings
+
+
+def test_recursion_error_document(tmp_path):
+    t = tmp_path / "z.prism"
+    with zipfile.ZipFile(t, "w") as z:
+        z.writestr("document.json", '{"a":' * 200000)
+    with pytest.raises(PrismFormatError):
+        prsmfile.open(t)
+
+
+def test_zip_read_error_in_analysis_skipped(tmp_path):
+    b = PrismBuilder()
+    bad = b.add_analysis("Bad", "ONE_WAY_ANOVA", {}, {"status": {}})
+    b.add_analysis("Good", "ONE_WAY_ANOVA", {}, {"status": {}})
+    p = b.save(tmp_path / "a.prism")
+    _patch_member_bytes(p, f"analyses/{bad}/sheet.json", lambda d: bytes(x ^ 0xFF for x in d))
+    with prsmfile.open(p) as pf:
+        assert [x.title for x in pf.analyses()] == ["Good"]
+        assert f"Skipped analysis {bad}: unreadable sheet.json" in pf.warnings
+
+
+def test_read_text_zlib_error_warns(tmp_path):
+    b = PrismBuilder()
+    b.add_member("extra.json", b'{"k": "' + b"v" * 200 + b'"}')
+    p = b.save(tmp_path / "a.prism")
+    _patch_member_bytes(p, "extra.json", lambda d: bytes(x ^ 0xFF for x in d))
+    with prsmfile.open(p) as pf:
+        assert pf.read_json("extra.json") is None
+        assert any("extra.json" in w for w in pf.warnings)
+
+
+def test_views_only_referenced(tmp_path):
+    b = PrismBuilder()
+    aid = b.add_analysis("A1", "ONE_WAY_ANOVA", {}, {"status": {}}, views=[("Real", [["x"]])])
+    b.add_member(
+        f"analyses/{aid}/result_sheets/STRAY.json",
+        json.dumps({"@class": "AnalysisView", "uid": "STRAY", "name": "Stray", "viewIdx": 0,
+                    "dataSheet": "S"}).encode(),
+    )
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        assert [v[0] for v in pf.analyses()[0].views] == ["Real"]
+
+
+def test_views_order_float_idx_missing_datasheet_blank_name(tmp_path):
+    b = PrismBuilder()
+    aid = b.add_analysis("A1", "ONE_WAY_ANOVA", {}, {"status": {}},
+                         views=[("first", [["x"]]), ("second", [["y"]]), ("third", [["z"]])])
+    base = f"analyses/{aid}/result_sheets/"
+    sheet = json.loads(b._members[f"analyses/{aid}/sheet.json"])
+    uids = [r["uid"] for r in sheet["resultSheets"]]
+
+    def put(uid, **kw):
+        obj = {"@class": "AnalysisView", "uid": uid}
+        obj.update(kw)
+        b.add_member(base + f"{uid}.json", json.dumps(obj).encode())
+
+    put(uids[0], name="first", viewIdx=2.0, dataSheet="S0")  # float, last
+    put(uids[1], name="  ", viewIdx=0)                       # blank name, no dataSheet
+    put(uids[2], name="third", viewIdx=1.0, dataSheet="S2")
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        v = pf.analyses()[0].views
+    assert v == [("", None), ("third", "S2"), ("first", "S0")]
+
+
+def test_two_listed_analyses_keep_listed_order(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("Zeta", "ONE_WAY_ANOVA", {}, {"status": {}})
+    b.add_analysis("Alpha", "ONE_WAY_ANOVA", {}, {"status": {}})
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        assert [x.title for x in pf.analyses()] == ["Zeta", "Alpha"]
+
+
+def test_results_kept_when_is_calculated_missing(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("old", "T_TESTS_AND_NONPARAMETRIC", {}, {"status": {"error": "VALID"}}, is_calculated=None)
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        a = pf.analyses()[0]
+    assert a.is_calculated is None and a.has_results and a.results == {"status": {"error": "VALID"}}
+
+
+def test_alert_original_text_and_order(tmp_path):
+    b = PrismBuilder()
+    aid = b.add_analysis("A1", "ONE_WAY_ANOVA", {}, {"status": {}},
+                         alert="  Alert one\r\nline two \n", auto_note="Note: A\r")
+    base = f"analyses/{aid}/floating_notes/"
+    # member order, not sorted file names: z-note is written before the a-note
+    b.add_member(base + "zzz.json", json.dumps({"isAuto": True, "text": {"string": "Z note"}}).encode())
+    b.add_member(base + "aaa.json", json.dumps({"isAuto": True, "text": {"string": "A note"}}).encode())
+    b.add_member(base + "sub/deep.json", json.dumps({"isAuto": True, "text": {"string": "deep"}}).encode())
+    b.add_member(base + "plain.json", json.dumps({"isAuto": True, "text": "plain str"}).encode())
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        a = pf.analyses()[0]
+    assert a.alerts == ["Alert one\r\nline two", "Note: A", "Z note", "A note"]

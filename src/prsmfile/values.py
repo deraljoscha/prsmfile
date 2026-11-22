@@ -71,6 +71,9 @@ def _int_idx(v) -> int | None:
     return None
 
 
+int_idx = _int_idx  # public alias: int, or integral float (bool excluded)
+
+
 def _idx(part) -> float:
     if isinstance(part, dict):
         v = _int_idx(part.get("idx"))

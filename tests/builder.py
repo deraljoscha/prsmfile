@@ -16,6 +16,8 @@ class PrismBuilder:
         self._analysis_ids: list[str] = []
         self._titles: dict[str, str] = {}
         self._n = 0
+        self._sets: dict[str, list[str]] = {}
+        self._last_raw: str | None = None
 
     def _uid(self) -> str:
         self._n += 1
@@ -71,6 +73,10 @@ class PrismBuilder:
         self._members[f"data/sets/{d}.json"] = self._dump(obj)
         return d
 
+    def data_sets(self, sheet_id: str) -> list[str]:
+        """Data set uids of a raw table, in column order."""
+        return list(self._sets[sheet_id])
+
     def add_raw_table(
         self,
         title,
@@ -83,12 +89,13 @@ class PrismBuilder:
     ) -> str:
         sid = self._uid()
         t = self._write_table(rows)
+        set_ids = [self._write_set(*ds) for ds in data_sets]
         table = {
-            "@class": "DataTable",
+            "@class": "XYDataTable" if (x_data_set is not None or table_format in ("xy", "survival")) else "DataTable",
             "uid": t,
             "format": table_format,
-            "dataFormat": "y_replicates",
-            "dataSets": [self._write_set(*ds) for ds in data_sets],
+            "dataFormat": data_sets[0][1] if data_sets else "y_replicates",
+            "dataSets": set_ids,
         }
         if row_titles:
             table["rowTitlesDataSet"] = self._write_set(None, "text", 1)
@@ -96,7 +103,12 @@ class PrismBuilder:
             table["xDataSet"] = self._write_set(*x_data_set)
             table["xDataSetFormat"] = x_data_set[1]
         if subcolumn_titles is not None:
-            ncols = max((len(c.get("replicates", [])) for c in subcolumn_titles), default=0)
+            ncols = max(
+                [ds[2] for ds in data_sets]
+                or [len(c.get("replicates", [])) for c in subcolumn_titles]
+                or [0]
+            )
+            table["replicatesCount"] = ncols
             table["subcolumnTitlesDataSet"] = self._write_set(
                 None, "text_replicates", 0, {"replicate count": ncols, "titles": subcolumn_titles}
             )
@@ -105,6 +117,8 @@ class PrismBuilder:
         )
         self._data_ids.append(sid)
         self._titles[sid] = title
+        self._sets[sid] = set_ids
+        self._last_raw = sid
         return sid
 
     def add_analysis(
@@ -135,15 +149,28 @@ class PrismBuilder:
             sheet["isCalculated"] = is_calculated
         if alert is not None:
             sheet["alertText"] = alert
+        input_sheets: list[str] = []
         for item in inputs:
             if item is None:
                 sheet["inputDataSets"].append(None)
                 continue
-            ltr, ititle = item
-            entry = {"uid": self._uid(), "idx": ltr}
+            ltr, ititle = item[0], item[1]
+            ref = item[2] if len(item) > 2 else None
+            if ref is None and self._last_raw is not None:
+                col = ord(ltr[0]) - ord("A") if len(ltr) == 1 and ltr.isalpha() else -1
+                ref = (self._last_raw, col)
+            uid = self._uid()  # dangling unless a real data set is referenced
+            if isinstance(ref, str):
+                uid = ref
+            elif isinstance(ref, tuple) and 0 <= ref[1] < len(self._sets.get(ref[0], [])):
+                uid = self._sets[ref[0]][ref[1]]
+                if ref[0] not in input_sheets:
+                    input_sheets.append(ref[0])
+            entry = {"uid": uid, "idx": ltr}
             if ititle is not None:
                 entry["title"] = ititle
             sheet["inputDataSets"].append(entry)
+        sheet["inputSheets"] = [{"uid": u, "title": self._titles[u]} for u in input_sheets]
         self._members[base + "parameters.json"] = self._dump(
             {"@class": "AnalysisParameters", "version": "0.0.0", "content": parameters}
         )
@@ -159,6 +186,8 @@ class PrismBuilder:
             fmt = view[2] if len(view) > 2 else "text"
             v, r = self._uid(), self._uid()
             tuid = self._uid() if vrows is None else self._write_table(vrows)
+            ncols = 1 if vrows is None else max((len(x) for x in vrows), default=0)
+            vsets = [self._write_set(None, fmt, 1) for _ in range(ncols)]
             sheet["resultSheets"].append({"uid": v, "title": name})
             self._members[base + f"result_sheets/{v}.json"] = self._dump(
                 {"@class": "AnalysisView", "uid": v, "name": name, "viewIdx": idx, "dataSheet": r}
@@ -166,7 +195,7 @@ class PrismBuilder:
             self._members[f"data/sheets/{r}/sheet.json"] = self._dump(
                 {"@class": "DataSheet", "uid": r, "title": f"{title}:{name}",
                  "table": {"@class": "DataTable", "uid": tuid, "format": "view",
-                           "dataFormat": fmt, "dataSets": []}}
+                           "dataFormat": fmt, "dataSets": vsets}}
             )
         if auto_note is not None:
             n = self._uid()

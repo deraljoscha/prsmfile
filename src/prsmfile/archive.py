@@ -7,10 +7,19 @@ import zlib
 from dataclasses import dataclass, field
 
 from .errors import PrismFormatError
-from .values import letter
+from .values import int_idx, letter
 
-_SHEET_RE = re.compile(r"^analyses/([^/]+)/sheet\.json$")
-_READ_ERRORS = (zipfile.BadZipFile, zlib.error, OSError, EOFError, NotImplementedError, RuntimeError)
+_SHEET_RE = re.compile(r"analyses/([^/]+)/sheet\.json")
+_READ_ERRORS = (
+    zipfile.BadZipFile,
+    zlib.error,
+    OSError,
+    EOFError,
+    NotImplementedError,
+    RuntimeError,
+    UnicodeDecodeError,
+)
+_JSON_ERRORS = (ValueError, RecursionError)
 
 
 def _is_opaque(name: str) -> bool:
@@ -65,6 +74,8 @@ class PrismFile:
             raise PrismFormatError(f"{path}: not a zip archive (not a .prism file)") from None
         except OSError as e:
             raise PrismFormatError(f"{path}: {e.strerror or e}") from None
+        except (UnicodeDecodeError, NotImplementedError, EOFError, zlib.error, RuntimeError) as e:
+            raise PrismFormatError(f"{path}: unsupported or damaged zip archive ({e})") from None
         try:
             self._names = set(self._zip.namelist())
             if "document.json" not in self._names:
@@ -72,7 +83,7 @@ class PrismFile:
             try:
                 raw = self._zip.read("document.json")
                 doc = json.loads(raw.decode("utf-8"))
-            except _READ_ERRORS + (UnicodeDecodeError, ValueError) as e:
+            except _READ_ERRORS + _JSON_ERRORS as e:
                 raise PrismFormatError(f"{path}: document.json unreadable ({e})") from None
             if not isinstance(doc, dict):
                 raise PrismFormatError(f"{path}: document.json root is not an object")
@@ -123,7 +134,7 @@ class PrismFile:
             return None
         try:
             obj = json.loads(text)
-        except ValueError:
+        except _JSON_ERRORS:
             self.warnings.append(f"Could not parse {name}")
             return None
         if not isinstance(obj, dict):
@@ -139,7 +150,7 @@ class PrismFile:
     def _discover(self) -> list[Analysis]:
         ids = []
         for n in self._zip.namelist():
-            m = _SHEET_RE.match(n)
+            m = _SHEET_RE.fullmatch(n)
             if m:
                 ids.append(m.group(1))
         found: dict[str, Analysis] = {}
@@ -183,23 +194,29 @@ class PrismFile:
             idx = item.get("idx")
             ltr = idx if isinstance(idx, str) and idx.strip() else letter(i)
             a.inputs.append((ltr, _text(item.get("title")) or ltr))
-        a.views = self._views(base)
+        a.views = self._views(base, sheet)
         a.alerts = self._alerts(base, sheet)
         return a
 
-    def _views(self, base: str) -> list[tuple[str, str | None]]:
-        prefix = base + "result_sheets/"
-        names = sorted(n for n in self._names if n.startswith(prefix) and n.endswith(".json"))
+    def _views(self, base: str, sheet: dict) -> list[tuple[str, str | None]]:
+        refs = sheet.get("resultSheets")
+        uids: list[str] = []
+        for r in refs if isinstance(refs, list) else []:
+            uid = r.get("uid") if isinstance(r, dict) else None
+            if isinstance(uid, str) and uid not in uids:
+                uids.append(uid)
         out = []
-        for n in names:
-            v = self.read_json(n)
+        for uid in uids:
+            v = self.read_json(f"{base}result_sheets/{uid}.json")
             if v is None:
                 continue
-            idx = v.get("viewIdx")
-            key = idx if isinstance(idx, int) and not isinstance(idx, bool) else float("inf")
+            key = int_idx(v.get("viewIdx"))
             name = v.get("name")
             ds = v.get("dataSheet")
-            out.append((key, (name if isinstance(name, str) else "", ds if isinstance(ds, str) else None)))
+            out.append((
+                float("inf") if key is None else key,
+                (name if _text(name) else "", ds if isinstance(ds, str) else None),
+            ))
         out.sort(key=lambda p: p[0])  # stable
         return [p[1] for p in out]
 
@@ -207,23 +224,25 @@ class PrismFile:
         texts = []
         t = _text(sheet.get("alertText"))
         if t:
-            texts.append(t)
-        prefix = base + "floating_notes/"
-        for n in sorted(x for x in self._names if x.startswith(prefix) and x.endswith(".json")):
+            texts.append(t.strip())
+        pattern = re.compile(re.escape(base) + r"floating_notes/[^/]+\.json")
+        for n in self._zip.namelist():  # archive member order
+            if not pattern.fullmatch(n):
+                continue
             note = self.read_json(n)
             if not note or note.get("isAuto") is not True:
                 continue
             s = note.get("text")
-            s = s.get("string") if isinstance(s, dict) else s
+            s = s.get("string") if isinstance(s, dict) else None
             if _text(s):
-                texts.append(s)
+                texts.append(s.strip())
         seen: set[str] = set()
         out = []
         for s in texts:
             k = _norm(s)
             if k not in seen:
                 seen.add(k)
-                out.append(k)
+                out.append(s)
         return out
 
 
