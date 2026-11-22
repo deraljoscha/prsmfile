@@ -129,7 +129,7 @@ def test_write_csv_cells_and_returns_index(tmp_path):
     assert out / "index.csv" in files
     with open(out / "analyses" / "01_plain" / "01_s-one.csv", newline="", encoding="utf-8") as f:
         rows = list(csv.reader(f))
-    assert rows == [["a", "b", "c", "d", "e"], ["0.1", "0.05", ">0.1", "", "True"]]
+    assert rows == [["a", "b", "c", "d", "e"], ["0.1", "0.05", ">0.1", "", "yes"]]
     with open(out / "index.csv", newline="", encoding="utf-8") as f:
         idx = list(csv.reader(f))
     assert idx[1][6] == "S, one: n"
@@ -451,3 +451,78 @@ def test_slug_unicode_separators():
     assert slug("a\u2013b\u00a0c\u2014d") == "a-b-c-d"
     assert slug("\u2013") == "untitled"
     assert slug("Δ") == "untitled"
+
+
+def build_named(tmp_path):
+    b = PrismBuilder()
+    ids = [b.add_analysis(t, "ONE_WAY_ANOVA", {}, {"x": 1, **OK}) for t in ("Alpha", "Beta", "Gamma")]
+    return b.save(tmp_path / "n.prism"), ids
+
+
+def test_filtered_analysis_keeps_its_list_number_everywhere(tmp_path, capsys):
+    p, _ = build_named(tmp_path)
+    _, lst, _ = run_cli([p, "--list", "--analysis", "gamma"], capsys)
+    assert lst.splitlines() == ["03  ONE_WAY_ANOVA  calculated  Gamma"]
+    _, text, _ = run_cli([p, "--analysis", "gamma"], capsys)
+    assert "== 03 Gamma [ONE_WAY_ANOVA] ==" in text and "== 01" not in text
+    out = tmp_path / "out"
+    run_cli([p, "--analysis", "gamma", "--csv", out], capsys)
+    with open(out / "index.csv", newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    assert rows[1][0] == "3" and rows[1][5] == "analyses/03_gamma"
+    assert (out / "analyses" / "03_gamma").is_dir()
+
+
+def test_analysis_matches_exact_number_or_id(tmp_path, capsys):
+    p, ids = build_named(tmp_path)
+    _, lst, _ = run_cli([p, "--list", "--analysis", "02"], capsys)
+    assert lst.splitlines() == ["02  ONE_WAY_ANOVA  calculated  Beta"]
+    _, lst, _ = run_cli([p, "--list", "--analysis", ids[0].lower()], capsys)
+    assert lst.splitlines() == ["01  ONE_WAY_ANOVA  calculated  Alpha"]
+
+
+def test_list_with_data_is_a_usage_error(tmp_path, capsys):
+    p, _ = build_named(tmp_path)
+    with pytest.raises(SystemExit) as e:
+        main([str(p), "--list", "--data"])
+    assert e.value.code == 2
+    assert "--data" in capsys.readouterr().err
+
+
+def test_list_does_not_call_error_status_calculated(tmp_path, capsys):
+    b = PrismBuilder()
+    b.add_analysis("Bad", "ONE_WAY_ANOVA", {}, {"status": {"error": "INVALID_DATA_TOO_FEW_COLUMNS", "warning": []}})
+    code, out, _ = run_cli([b.save(tmp_path / "e.prism"), "--list"], capsys)
+    assert "calculated  Bad" not in out.replace("not calculated", "") and "INVALID_DATA_TOO_FEW_COLUMNS" in out
+
+
+def test_failed_export_removes_parents_it_created(tmp_path, monkeypatch, capsys):
+    p = build_three(tmp_path)
+    import prsmfile.render as render
+
+    def failing(path, header, rows):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(render, "_write", failing)
+    code, _, err = run_cli([p, "--csv", tmp_path / "a" / "b" / "out"], capsys)
+    assert code == 1 and "disk full" in err
+    assert not (tmp_path / "a").exists()
+
+
+def test_failed_rename_restores_empty_target(tmp_path, monkeypatch, capsys):
+    p = build_three(tmp_path)
+    target = tmp_path / "out"
+    target.mkdir()
+
+    def no_rename(src, dst):
+        raise OSError(18, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "rename", no_rename)
+    code, _, _ = run_cli([p, "--csv", target], capsys)
+    assert code == 1 and target.is_dir() and not any(target.iterdir())
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["out", "t.prism"]
+
+
+def test_package_exports_table_reader():
+    assert prsmfile.read_table is not None and prsmfile.Table is not None
+    assert {"read_table", "Table"} <= set(prsmfile.__all__)

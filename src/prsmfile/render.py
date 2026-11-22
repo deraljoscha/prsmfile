@@ -42,6 +42,8 @@ def _csv_cell(c) -> str:
         if c.value is None:
             return ""
         return (">" if c.bound else "") + repr(c.value)
+    if isinstance(c, bool):
+        return "yes" if c else "no"
     if isinstance(c, float):
         return repr(c)
     return str(c)
@@ -59,7 +61,12 @@ def _grid(columns, rows) -> list[str]:
     return [line(head), line(["-" * w for w in widths])] + [line(r) for r in body]
 
 
-def to_text(pf, reports, tables) -> str:
+def _numbers(reports, numbers) -> list[int]:
+    """The analysis numbers of --list; 1, 2, ... when not given."""
+    return list(numbers) if numbers is not None else list(range(1, len(reports) + 1))
+
+
+def to_text(pf, reports, tables, numbers=None) -> str:
     out: list[str] = [f"File: {flat(str(pf.path))}"]
     bits = []
     if pf.prism_version:
@@ -72,7 +79,7 @@ def to_text(pf, reports, tables) -> str:
         out.append(", ".join(bits))
     for w in pf.warnings:
         out.append(f"Warning: {flat(w)}")
-    for n, r in enumerate(reports, 1):
+    for n, r in zip(_numbers(reports, numbers), reports):
         a = r.analysis
         out += ["", f"== {n:02d} {flat(a.title)} [{a.analysis_class}] =="]
         for w in r.warnings:
@@ -135,54 +142,87 @@ def _not_empty(target: Path) -> PrismFormatError:
     return PrismFormatError(f"{target}: output directory exists and is not empty")
 
 
-def _stage_and_publish(target: Path, build) -> None:
-    """Run build(staging_dir), then rename the staging dir to target.
-
-    The staging dir is a fresh mkdtemp in the parent of target, so a failed or
-    parallel export never leaves a partial or mixed target."""
-    if target.exists() and (not target.is_dir() or any(target.iterdir())):
-        raise _not_empty(target)
-    for anc in (target.parent, *target.parent.parents):
+def _make_parents(parent: Path) -> list[Path]:
+    """Create the missing ancestors of the export target; return those created, deepest first."""
+    missing = []
+    for anc in (parent, *parent.parents):
         if anc.exists():
             if not anc.is_dir():
                 raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), str(anc))
             break
-    target.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent))
+        missing.append(anc)
+    created: list[Path] = []
+    try:
+        for anc in reversed(missing):
+            anc.mkdir()
+            created.insert(0, anc)
+    except BaseException:
+        _remove_dirs(created)
+        raise
+    return created
+
+
+def _remove_dirs(dirs: list[Path]) -> None:
+    for d in dirs:
+        try:
+            d.rmdir()
+        except OSError:
+            pass
+
+
+def _stage_and_publish(target: Path, build) -> None:
+    """Run build(staging_dir), then rename the staging dir to target.
+
+    The staging dir is a fresh mkdtemp in the parent of target, so a failed or
+    parallel export never leaves a partial or mixed target. Parent directories
+    created for the export are removed again when it fails."""
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        raise _not_empty(target)
+    created = _make_parents(target.parent)
+    try:
+        staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent))
+    except BaseException:
+        _remove_dirs(created)
+        raise
     try:
         umask = os.umask(0)
         os.umask(umask)
         os.chmod(staging, 0o777 & ~umask)  # mkdtemp creates 0700
         build(staging)
-        if target.is_dir():
+        try:
+            os.rename(staging, target)  # POSIX replaces an empty target directory atomically
+        except OSError:
+            if not target.is_dir():
+                raise
             try:
-                target.rmdir()  # empty target is replaced by the staging dir
+                target.rmdir()  # elsewhere (e.g. Windows) the empty target is removed first
             except OSError:
                 raise _not_empty(target) from None
-        try:
-            os.rename(staging, target)
-        except OSError:
-            if target.exists():
-                raise _not_empty(target) from None
-            raise
+            try:
+                os.rename(staging, target)
+            except OSError:
+                if not target.exists():
+                    target.mkdir()  # put the empty directory back
+                raise
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
+        _remove_dirs(created)
         raise
 
 
-def write_csv(out_dir: Path, reports, tables) -> list[Path]:
+def write_csv(out_dir: Path, reports, tables, numbers=None) -> list[Path]:
     target = _resolve_target(out_dir)
     written: list[Path] = []
 
     def build(staging: Path) -> None:
-        for p in _write_all(staging, reports, tables):
+        for p in _write_all(staging, reports, tables, numbers):
             written.append(target / p.relative_to(staging))
 
     _stage_and_publish(target, build)
     return written
 
 
-def _write_all(out_dir: Path, reports, tables) -> list[Path]:
+def _write_all(out_dir: Path, reports, tables, numbers=None) -> list[Path]:
     written: list[Path] = []
     for n, t in enumerate(tables, 1):
         p = out_dir / "data" / f"{n:02d}_{slug(t.title)}.csv"
@@ -190,7 +230,7 @@ def _write_all(out_dir: Path, reports, tables) -> list[Path]:
         _write(p, t.columns, [(list(r) + [""] * width)[: max(width, len(r))] for r in t.rows])
         written.append(p)
     index = []
-    for n, r in enumerate(reports, 1):
+    for n, r in zip(_numbers(reports, numbers), reports):
         a = r.analysis
         folder = f"analyses/{n:02d}_{slug(a.title)}" if r.sections else ""
         notes = list(r.warnings) + [f"{s.title}: {s.note}" for s in r.sections if s.note]

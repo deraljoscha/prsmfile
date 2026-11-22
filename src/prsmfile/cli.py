@@ -26,12 +26,26 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--csv", metavar="DIR", help="write CSV files into a new or empty directory")
     p.add_argument("--data", action="store_true", help="include the raw data tables")
     p.add_argument("--analysis", metavar="TEXT",
-                   help="only analyses whose title contains TEXT (case-insensitive)")
+                   help="only the analysis with this number (as in --list) or id, "
+                        "else the analyses whose title contains TEXT (case-insensitive)")
     p.add_argument("--version", action="version", version=f"prsmfile {__version__}")
     return p
 
 
+def _status_error(a) -> str | None:
+    """The Prism error code of an analysis whose results hold nothing but a failed status."""
+    res = a.results
+    if not isinstance(res, dict) or any(k != "status" for k in res):
+        return None
+    status = res.get("status")
+    err = status.get("error") if isinstance(status, dict) else None
+    return err if isinstance(err, str) and err != "VALID" else None
+
+
 def _state(a) -> str:
+    err = _status_error(a)
+    if err is not None and not any(ds for _, ds in a.views):
+        return f"Prism error {err}"
     if a.has_results:
         return "calculated"
     if a.is_calculated is False:
@@ -48,8 +62,10 @@ def _run(args) -> int:
     with open_prism(args.file) as pf:
         numbered = list(enumerate(pf.analyses(), 1))
         if args.analysis is not None:
-            needle = args.analysis.casefold()
-            numbered = [(n, a) for n, a in numbered if needle in flat(a.title).casefold()]
+            needle = args.analysis.strip().casefold()
+            exact = [(n, a) for n, a in numbered
+                     if a.id.casefold() == needle or (needle.isdigit() and int(needle) == n)]
+            numbered = exact or [(n, a) for n, a in numbered if needle in flat(a.title).casefold()]
             if not numbered:
                 print(f'no analysis matches "{args.analysis}"', file=sys.stderr)
                 return 1
@@ -59,12 +75,13 @@ def _run(args) -> int:
             _warn_file(pf)
             return 0
         analyses = [a for _, a in numbered]
+        numbers = [n for n, _ in numbered]
         reports = [read_analysis(pf, a) for a in analyses]
         tables = []
         if args.data:
             tables = [t for t in (read_table(pf, sid) for sid in pf.data_tables()) if t is not None]
         if args.csv is not None:
-            print(len(write_csv(Path(args.csv), reports, tables)))
+            print(len(write_csv(Path(args.csv), reports, tables, numbers)))
             _warn_file(pf)
         elif args.json:
             import json
@@ -72,7 +89,7 @@ def _run(args) -> int:
             print(json.dumps(to_json_obj(pf, reports, tables), ensure_ascii=False, indent=2,
                              allow_nan=False))
         else:
-            sys.stdout.write(to_text(pf, reports, tables))
+            sys.stdout.write(to_text(pf, reports, tables, numbers))
     return 0
 
 
@@ -86,8 +103,11 @@ def _quiet_stdout() -> None:
 
 
 def main(argv=None) -> int:
+    parser = _parser()
     try:
-        args = _parser().parse_args(argv)
+        args = parser.parse_args(argv)
+        if args.list and args.data:
+            parser.error("--data cannot be combined with --list")
     except SystemExit as e:  # --help / --version print, then exit; the pipe may be closed
         try:
             sys.stdout.flush()
