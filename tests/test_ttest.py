@@ -382,3 +382,19 @@ def test_non_dict_model_falls_back(tmp_path):
     r = run(tmp_path, {"status": OK, "welchTTestModel": 5}, {"experimentalDesign": "WELCH_T_TEST"})
     assert r.kind == "generic"
     assert "Structured reader failed (KeyError), showing generic values." in r.warnings
+
+
+def test_untitled_input_label_is_bare_letter(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0)
+    del res["descriptiveStatistics"]
+    r = run(tmp_path, res, inputs=(("A", None), ("B", "Y")))
+    e = sec(r, "Effect").rows[0]
+    assert e[0] == "A" and e[3] == "B:Y"
+
+
+def test_fallback_never_reuses_untitled_column(tmp_path):
+    res = welch_results(5.0, 7.0, 2.0, ids=((0, None), (1, "Drug")))
+    res["descriptiveStatistics"]["sample1"]["value"]["mean"] = 7.5  # group 2 unmatched
+    r = run(tmp_path, res, inputs=(("B", "X"), ("A", None)))
+    e = sec(r, "Effect").rows[0]
+    assert e[0] == "A" and e[3] == "B:X" and INF in r.warnings

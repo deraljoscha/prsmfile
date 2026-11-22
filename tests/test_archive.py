@@ -130,6 +130,7 @@ def test_inputs_and_views(tmp_path):
     with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
         a = pf.analyses()[0]
     assert a.inputs == [("A", "WT"), ("B", "B"), ("C", "C")]
+    assert a.input_titles == ["WT", None, None]
     assert [v[0] for v in a.views] == ["ANOVA results", "Multiple comparisons"]
     assert all(isinstance(v[1], str) for v in a.views)
 

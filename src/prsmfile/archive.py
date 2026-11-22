@@ -55,7 +55,8 @@ class Analysis:
     is_calculated: bool | None
     parameters: dict = field(default_factory=dict)
     results: dict | None = None
-    inputs: list[tuple[str, str]] = field(default_factory=list)
+    inputs: list[tuple[str, str]] = field(default_factory=list)  # (letter, title or letter)
+    input_titles: list[str | None] = field(default_factory=list)  # title as stored, None if blank; parallel to inputs
     views: list[tuple[str, str | None]] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
 
@@ -192,7 +193,7 @@ class PrismFile:
             self._analyses = self._discover()
         # copies of the mutable lists: callers cannot change the cached state
         return [
-            replace(a, inputs=list(a.inputs), views=list(a.views), alerts=list(a.alerts))
+            replace(a, inputs=list(a.inputs), input_titles=list(a.input_titles), views=list(a.views), alerts=list(a.alerts))
             for a in self._analyses
         ]
 
@@ -242,7 +243,9 @@ class PrismFile:
                 continue
             idx = item.get("idx")
             ltr = idx if isinstance(idx, str) and idx.strip() else letter(i)
-            a.inputs.append((ltr, _text(item.get("title")) or ltr))
+            title = _text(item.get("title"))
+            a.inputs.append((ltr, title or ltr))
+            a.input_titles.append(title)
         a.views = self._views(base, sheet)
         a.alerts = self._alerts(base, sheet)
         return a

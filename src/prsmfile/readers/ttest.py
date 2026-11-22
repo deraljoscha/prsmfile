@@ -1,7 +1,7 @@
 """T_TESTS_AND_NONPARAMETRIC: t tests, Mann-Whitney and Wilcoxon (docs/format.md 2.2)."""
 from __future__ import annotations
 
-from ..values import PValue, ci, entries, label, num
+from ..values import PValue, ci, entries, int_idx, label, letter, num
 from . import register
 from .common import (
     DIFFERENCES,
@@ -53,47 +53,59 @@ def _raw_num(x) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
-def _match_label(stats: dict, n, key: str, val) -> list[str]:
-    """Labels of the non-`differences` entries whose (n, key) equals (n, val): the raw
-    stored values, exact =="""
+def _identity(id_, text: str):
+    """Column identity of a stored id: the column letter, else the formatted label."""
+    col = id_.get("col") if isinstance(id_, dict) else None
+    idx = int_idx(_dict(col).get("idx"))
+    return letter(idx) if idx is not None and idx >= 0 else text
+
+
+def _match_label(stats: dict, n, key: str, val) -> list[tuple[str, object]]:
+    """(label, identity) of the non-`differences` entries whose (n, key) equals (n, val):
+    the raw stored values, exact =="""
     if not (_raw_num(n) and _raw_num(val)):
         return []
     out = []
     for id_, value in entries({k: v for k, v in _dict(stats).items() if k != DIFFERENCES}):
         v = _dict(value)
         if _raw_num(v.get("n")) and _raw_num(v.get(key)) and v["n"] == n and v[key] == val:
-            out.append(label(id_))
+            text = label(id_)
+            out.append((text, _identity(id_, text)))
     return out
 
 
-def _input_label(item) -> str:
-    ltr, title = item
-    return f"{ltr}:{title}"
+def _input_label(ltr: str, title: str | None) -> str:
+    """Formatted exactly like values.label: a blank title gives the bare letter."""
+    return f"{ltr}:{title}" if title else ltr
 
 
 def _groups(a, stats, n1, v1, n2, v2, key, warn):
     """Group labels per group: a unique non-empty exact (n, value) match, else the
-    input at that position (with a warning), else None."""
+    input at that position (with a warning), else None. Columns are compared by identity
+    (the letter), never by the formatted label."""
     m1, m2 = _match_label(stats, n1, key, v1), _match_label(stats, n2, key, v2)
-    ok1, ok2 = len(m1) == 1 and bool(m1[0]), len(m2) == 1 and bool(m2[0])
-    if ok1 and ok2 and m1[0] == m2[0]:
+    ok1, ok2 = len(m1) == 1 and bool(m1[0][0]), len(m2) == 1 and bool(m2[0][0])
+    if ok1 and ok2 and m1[0][1] == m2[0][1]:
         ok1 = ok2 = False
-    out: list[str | None] = [m1[0] if ok1 else None, m2[0] if ok2 else None]
+    out: list[str | None] = [m1[0][0] if ok1 else None, m2[0][0] if ok2 else None]
+    ids: list[object] = [m1[0][1] if ok1 else None, m2[0][1] if ok2 else None]
     inferred = False
     usable = len(a.inputs) >= 2
-    labels = [_input_label(x) for x in a.inputs]
+    titles = list(a.input_titles) + [None] * (len(a.inputs) - len(a.input_titles))
+    cands = [(ltr, _input_label(ltr, titles[i])) for i, (ltr, _t) in enumerate(a.inputs)]
     for i, ok in enumerate((ok1, ok2)):
         if ok:
             continue
         inferred = True
         if not usable:
             continue
-        other = out[1 - i]
-        pick = labels[i] if i < len(labels) else None
-        if pick is not None and pick == other:
-            rest = [x for x in labels if x != other]
+        other = ids[1 - i]
+        pick = cands[i] if i < len(cands) else None
+        if pick is not None and other is not None and pick[0] == other:
+            rest = [c for c in cands if c[0] != other]
             pick = rest[0] if len(rest) == 1 else None
-        out[i] = pick
+        out[i] = pick[1] if pick is not None else None
+        ids[i] = pick[0] if pick is not None else None
     if inferred and usable:
         warn("Group labels inferred from input order.")
     return out[0], out[1]
