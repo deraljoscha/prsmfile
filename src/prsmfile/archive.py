@@ -143,6 +143,22 @@ class PrismFile:
             return None
         return obj
 
+    def data_tables(self) -> list[str]:
+        """Sheet ids of the raw data tables, in the listed order."""
+        sheets = self._doc.get("sheets")
+        lst = sheets.get("data") if isinstance(sheets, dict) else None
+        out: list[str] = []
+        for sid in lst if isinstance(lst, list) else []:
+            if isinstance(sid, str) and sid not in out:
+                out.append(sid)
+        return out
+
+    def result_table(self, sheet_id: str):
+        """The data table behind a view's result sheet id, or None."""
+        from .tables import read_table
+
+        return read_table(self, sheet_id)
+
     def analyses(self) -> list[Analysis]:
         if self._analyses is None:
             self._analyses = self._discover()
