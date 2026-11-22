@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -38,18 +39,24 @@ def _state(a) -> str:
     return "no stored results"
 
 
+def _warn_file(pf) -> None:
+    for w in pf.warnings:
+        print(f"Warning: {flat(w)}", file=sys.stderr)
+
+
 def _run(args) -> int:
     with open_prism(args.file) as pf:
         numbered = list(enumerate(pf.analyses(), 1))
         if args.analysis is not None:
-            needle = args.analysis.lower()
-            numbered = [(n, a) for n, a in numbered if needle in flat(a.title).lower()]
+            needle = args.analysis.casefold()
+            numbered = [(n, a) for n, a in numbered if needle in flat(a.title).casefold()]
             if not numbered:
                 print(f'no analysis matches "{args.analysis}"', file=sys.stderr)
                 return 1
         if args.list:
             for n, a in numbered:
                 print(f"{n:02d}  {a.analysis_class}  {_state(a)}  {flat(a.title)}")
+            _warn_file(pf)
             return 0
         analyses = [a for _, a in numbered]
         reports = [read_analysis(pf, a) for a in analyses]
@@ -58,6 +65,7 @@ def _run(args) -> int:
             tables = [t for t in (read_table(pf, sid) for sid in pf.data_tables()) if t is not None]
         if args.csv is not None:
             print(len(write_csv(Path(args.csv), reports, tables)))
+            _warn_file(pf)
         elif args.json:
             import json
 
@@ -75,10 +83,23 @@ def main(argv=None) -> int:
         if reconf is not None:
             reconf(encoding="utf-8", errors="replace")
     try:
-        return _run(args)
+        code = _run(args)
+        sys.stdout.flush()
+        return code
+    except BrokenPipeError:
+        # the reader went away (e.g. `| head`): silence the flush at exit
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except (OSError, ValueError, AttributeError):
+            pass
+        return 1
     except PrismFormatError as e:
         msg = str(e)
         if args.file.lower().endswith(".pzf"):
             msg += " (.pzf files are not supported, save the project as .prism)"
         print(f"prsmfile: {msg}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"prsmfile: {e.filename or args.csv or args.file}: {e.strerror or e}", file=sys.stderr)
         return 1

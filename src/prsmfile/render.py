@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import re
+import unicodedata
 from pathlib import Path
 
 from .errors import PrismFormatError
@@ -102,13 +103,14 @@ def to_json_obj(pf, reports, tables) -> dict:
 
 
 def slug(s: str) -> str:
+    s = "".join("-" if unicodedata.category(ch) in ("Pd", "Zs") else ch for ch in s)
     s = re.sub(r"[^a-z0-9]+", "-", s.lower().encode("ascii", "ignore").decode()).strip("-")
     return s[:60].strip("-") or "untitled"
 
 
 def _write(path: Path, header, rows) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8", errors="replace") as f:
+    with open(path, "x", newline="", encoding="utf-8", errors="replace") as f:
         w = csv.writer(f)
         if header:
             w.writerow(header)
@@ -116,7 +118,7 @@ def _write(path: Path, header, rows) -> None:
 
 
 def write_csv(out_dir: Path, reports, tables) -> list[Path]:
-    out_dir = Path(out_dir)
+    out_dir = Path(out_dir).resolve()
     if out_dir.exists() and (not out_dir.is_dir() or any(out_dir.iterdir())):
         raise PrismFormatError(f"{out_dir}: output directory exists and is not empty")
     written: list[Path] = []

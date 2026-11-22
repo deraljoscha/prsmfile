@@ -242,3 +242,98 @@ def test_help_lists_options(capsys):
     out = capsys.readouterr().out
     for opt in ("--list", "--json", "--csv", "--data", "--analysis"):
         assert opt in out
+
+
+def test_csv_dotdot_into_populated_dir(tmp_path, capsys):
+    p = build_three(tmp_path)
+    old = tmp_path / "old"
+    old.mkdir()
+    (old / "keep.txt").write_text("k")
+    code, out, err = run_cli([p, "--csv", tmp_path / "missing" / ".." / "old"], capsys)
+    assert code == 1 and "Traceback" not in err and err.strip()
+    assert [f.name for f in old.iterdir()] == ["keep.txt"]
+
+
+def test_csv_symlink_index_not_followed(tmp_path, capsys):
+    p = build_three(tmp_path)
+    d = tmp_path / "out"
+    d.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious")
+    (d / "index.csv").symlink_to(victim)
+    code, out, err = run_cli([p, "--csv", d], capsys)
+    assert code == 1 and err.strip()
+    assert victim.read_text() == "precious"
+
+
+def test_csv_files_opened_exclusively(tmp_path, monkeypatch):
+    p = build_three(tmp_path)
+    pf, reps = reports_of(p)
+    modes = []
+    real = open
+
+    def spy(file, mode="r", *a, **k):
+        modes.append(mode)
+        return real(file, mode, *a, **k)
+
+    monkeypatch.setattr("prsmfile.render.open", spy, raising=False)
+    write_csv(tmp_path / "o", reps, [])
+    assert modes and set(modes) == {"x"}
+
+
+def test_csv_oserror_message(tmp_path, capsys):
+    p = build_three(tmp_path)
+    f = tmp_path / "afile"
+    f.write_text("x")
+    code, out, err = run_cli([p, "--csv", f / "sub"], capsys)
+    assert code == 1 and "Traceback" not in err
+    assert err.startswith("prsmfile: ") and "Not a directory" in err
+
+
+def _pipe(args, tmp_path, head):
+    import subprocess
+    import sys
+    cmd = f"{sys.executable} -m prsmfile {' '.join(map(str, args))} | head -n {head}"
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                          env={"PYTHONPATH": "src", "PATH": "/usr/bin:/bin"},
+                          cwd=".")
+
+
+@pytest.mark.parametrize("head", [0, 1])
+@pytest.mark.parametrize("flag", ["--list", "--json", ""])
+def test_broken_pipe(tmp_path, flag, head):
+    b = PrismBuilder()
+    for i in range(400):
+        b.add_analysis(f"Analysis {i}", "ONE_WAY_ANOVA", {}, {"x": 1, **OK})
+    p = b.save(tmp_path / "t.prism")
+    r = _pipe([p, flag], tmp_path, head)
+    assert "Traceback" not in r.stderr and "Exception ignored" not in r.stderr, r.stderr
+    assert "BrokenPipe" not in r.stderr
+
+
+def test_file_warnings_on_stderr_csv_and_list(tmp_path, capsys):
+    b = PrismBuilder()
+    b.add_analysis("A", "ONE_WAY_ANOVA", {}, {"x": 1, **OK})
+    p = b.save(tmp_path / "t.prism", format_version="2-0-0")
+    code, out, err = run_cli([p, "--list"], capsys)
+    assert code == 0 and "Warning: Unknown format version 2-0-0" in err
+    code, out, err = run_cli([p, "--csv", tmp_path / "o"], capsys)
+    assert code == 0 and "Warning: Unknown format version 2-0-0" in err
+    code, out, err = run_cli([p, "--json"], capsys)
+    assert "Unknown format version" in json.loads(out)["warnings"][0]
+    assert "Warning:" not in err
+
+
+def test_filter_casefold(tmp_path, capsys):
+    b = PrismBuilder()
+    b.add_analysis("Straße test", "ONE_WAY_ANOVA", {}, {"x": 1, **OK})
+    p = b.save(tmp_path / "t.prism")
+    code, out, _ = run_cli([p, "--list", "--analysis", "STRASSE"], capsys)
+    assert code == 0 and "Straße" in out
+
+
+def test_slug_unicode_separators():
+    from prsmfile.render import slug
+    assert slug("a\u2013b\u00a0c\u2014d") == "a-b-c-d"
+    assert slug("\u2013") == "untitled"
+    assert slug("Δ") == "untitled"
