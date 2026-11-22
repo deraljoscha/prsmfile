@@ -105,7 +105,7 @@ def _read_set(pf, uid) -> dict | None:
     return pf.read_json(f"data/sets/{uid}.json")
 
 
-def _declared_headers(pf, table: dict) -> list[str]:
+def _declared_headers(pf, table: dict, widest: int = 0) -> list[str]:
     cols: list[str] = []
     if table.get("rowTitlesDataSet"):
         cols.append("Row title")
@@ -121,10 +121,18 @@ def _declared_headers(pf, table: dict) -> list[str]:
             cols.extend([base] if w == 1 else [f"{base} {i + 1}" for i in range(w)])
     subs = _sub_titles(pf, table)
     sets = table.get("dataSets")
-    for i, uid in enumerate(sets if isinstance(sets, list) else []):
-        ds = _read_set(pf, uid)
+    loaded = [_read_set(pf, uid) for uid in (sets if isinstance(sets, list) else [])]
+    # a missing data-set file hides its width: share what the csv has left over
+    known = sum(_width(ds) for ds in loaded if ds is not None)
+    missing = sum(1 for ds in loaded if ds is None)
+    fill = 1
+    if missing and widest:
+        spare = widest - len(cols) - known
+        if spare >= missing and spare % missing == 0:
+            fill = spare // missing
+    for i, ds in enumerate(loaded):
         if ds is None:
-            cols.append(letter(i))
+            cols.extend(_headers(letter(i), None, fill, i, subs))
             continue
         base = dataset_title(ds) or letter(i)
         cols.extend(_headers(base, _fmt(ds.get("format")), _width(ds), i, subs))
@@ -157,9 +165,9 @@ def read_table(pf, sheet_id: str) -> Table | None:
     except csv.Error as e:
         pf.warnings.append(f"Could not parse {prefix}data.csv ({e})")
         return None
-    columns = _declared_headers(pf, table)
+    widest = max((len(r) for r in rows), default=0)
+    columns = _declared_headers(pf, table, widest)
     if rows:
-        widest = max(len(r) for r in rows)
         columns = columns[:widest]
         columns += [f"Column {n}" for n in range(len(columns) + 1, widest + 1)]
     return Table(

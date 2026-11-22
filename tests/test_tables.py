@@ -399,3 +399,32 @@ def test_view_sort_adjacent_huge_ints_reverse_stored(tmp_path):
     b.add_member(sheet, json.dumps(obj).encode())
     with prsmfile.open(b.save(tmp_path / "t.prism")) as pf:
         assert [v[0] for v in pf.analyses()[0].views] == ["First", "Second"]
+
+
+def test_missing_data_set_file_does_not_shift_later_headers(tmp_path):
+    b = PrismBuilder()
+    sid = b.add_raw_table("T", "grouped", [("A", "y_replicates", 2), ("B", "y_replicates", 2)],
+                          [["1", "2", "3", "4"]])
+    first = b.data_sets(sid)[0]
+    del b._members[f"data/sets/{first}.json"]
+    t = table_of(tmp_path, b, sid)
+    assert t.columns == ["A 1", "A 2", "B 1", "B 2"]
+
+
+def test_missing_data_set_file_with_x_and_row_titles(tmp_path):
+    b = PrismBuilder()
+    sid = b.add_raw_table("T", "xy", [("A", "y_sd_n", 3), ("B", "y_single", 1)],
+                          [["x", "1", "2", "3", "4"]], x_data_set=("X", "y_single", 1))
+    del b._members[f"data/sets/{b.data_sets(sid)[0]}.json"]
+    t = table_of(tmp_path, b, sid)
+    assert t.columns[0] == "X" and t.columns[-1] == "B" and len(t.columns) == 5
+    assert t.columns[1:4] == ["A 1", "A 2", "A 3"]  # unknown format: numbered
+
+
+def test_two_missing_data_sets_share_the_remaining_width(tmp_path):
+    b = PrismBuilder()
+    sid = b.add_raw_table("T", "grouped", [("A", "y_replicates", 2), ("B", "y_replicates", 2)],
+                          [["1", "2", "3", "4"]])
+    for uid in b.data_sets(sid):
+        del b._members[f"data/sets/{uid}.json"]
+    assert table_of(tmp_path, b, sid).columns == ["A 1", "A 2", "B 1", "B 2"]

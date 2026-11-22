@@ -425,3 +425,43 @@ def test_analysis_positional_field_order():
     a = Analysis("id", "t", "CLS", True, {"p": 1}, {"r": 2}, [("A", "x")], [("v", None)], ["al"])
     assert a.parameters == {"p": 1} and a.results == {"r": 2} and a.inputs == [("A", "x")]
     assert a.views == [("v", None)] and a.alerts == ["al"] and a.input_titles == []
+
+
+def test_alert_text_truncated_without_separators_is_dropped(tmp_path):
+    full = "Prism has identified an unstable parameter.\rThis suggests that your data are incomplete.\rLearn more"
+    stored = "Prism has identified an unstable parameter.This suggests that your data are inco"
+    b = PrismBuilder()
+    b.add_analysis("A1", "NONLINEAR_REGRESSION", {}, {"status": {}}, alert=stored, auto_note=full)
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        a = pf.analyses()[0]
+    assert a.alerts == ["Prism has identified an unstable parameter.\rThis suggests that your data are incomplete."]
+
+
+def test_alert_text_that_is_not_a_prefix_is_kept(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("A1", "T", {}, {"status": {}}, alert="Orphaned analysis", auto_note="Something else entirely")
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        assert pf.analyses()[0].alerts == ["Orphaned analysis", "Something else entirely"]
+
+
+def test_learn_more_link_text_is_removed(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("A1", "T", {}, {"status": {}},
+                   auto_note="Best-fit value, no interval. \rLearn more \rSecond paragraph. \rLearn more")
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        (alert,) = pf.analyses()[0].alerts
+    assert "Learn more" not in alert and alert.startswith("Best-fit value") and "Second paragraph." in alert
+
+
+def test_mutating_returned_dicts_does_not_change_the_cache(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("A1", "T", {"x": {"y": 1}}, {"k": {"v": [1, 2]}})
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        a = pf.analyses()[0]
+        a.results["k"]["v"].append(3)
+        a.results.clear()
+        a.parameters["x"]["y"] = 99
+        a.parameters.clear()
+        again = pf.analyses()[0]
+    assert again.results == {"k": {"v": [1, 2]}}
+    assert again.parameters == {"x": {"y": 1}}

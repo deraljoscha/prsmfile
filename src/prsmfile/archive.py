@@ -5,6 +5,7 @@ import math
 import re
 import zipfile
 import zlib
+import copy
 from dataclasses import dataclass, field, replace
 
 from .errors import PrismFormatError
@@ -38,6 +39,28 @@ def _norm(s: str) -> str:
     return " ".join(s.split())
 
 
+def _squash(s: str) -> str:
+    """All whitespace removed: Prism stores alertText without the separators of the note."""
+    return "".join(s.split())
+
+
+_LINE_SEP = re.compile(r"(\r\n|\r|\n)")
+
+
+def _drop_link_text(s: str) -> str:
+    """Remove the UI link text "Learn more" that Prism appends to a note paragraph."""
+    parts = _LINE_SEP.split(s)  # text, sep, text, sep, ...
+    out: list[str] = []
+    i = 0
+    while i < len(parts):
+        if i % 2 == 0 and parts[i].strip() == "Learn more":
+            i += 2  # the text and the separator after it
+            continue
+        out.append(parts[i])
+        i += 1
+    return "".join(out).strip()
+
+
 def _parse_version(raw) -> tuple[int, ...]:
     if not isinstance(raw, str):
         return ()
@@ -59,8 +82,6 @@ class Analysis:
     views: list[tuple[str, str | None]] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
     input_titles: list[str | None] = field(default_factory=list)  # title as stored, None if blank; parallel to inputs
-
-    # parameters and results are shared with the cache: treat them as read-only
 
     @property
     def has_results(self) -> bool:
@@ -191,9 +212,17 @@ class PrismFile:
     def analyses(self) -> list[Analysis]:
         if self._analyses is None:
             self._analyses = self._discover()
-        # copies of the mutable lists: callers cannot change the cached state
+        # copies: callers cannot change the cached state
         return [
-            replace(a, inputs=list(a.inputs), input_titles=list(a.input_titles), views=list(a.views), alerts=list(a.alerts))
+            replace(
+                a,
+                parameters=copy.deepcopy(a.parameters),
+                results=copy.deepcopy(a.results),
+                inputs=list(a.inputs),
+                input_titles=list(a.input_titles),
+                views=list(a.views),
+                alerts=list(a.alerts),
+            )
             for a in self._analyses
         ]
 
@@ -276,10 +305,8 @@ class PrismFile:
         return [p[1] for p in out]
 
     def _alerts(self, base: str, sheet: dict) -> list[str]:
-        texts = []
-        t = _text(sheet.get("alertText"))
-        if t:
-            texts.append(t.strip())
+        head = _text(sheet.get("alertText"))
+        notes = []
         pattern = re.compile(re.escape(base) + r"floating_notes/[^/]+\.json")
         for n in self._zip.namelist():  # archive member order
             if not pattern.fullmatch(n):
@@ -289,8 +316,17 @@ class PrismFile:
                 continue
             s = note.get("text")
             s = s.get("string") if isinstance(s, dict) else None
-            if _text(s):
-                texts.append(s.strip())
+            s = _drop_link_text(s) if _text(s) else None
+            if s:
+                notes.append(s)
+        texts = []
+        if head:
+            head = _drop_link_text(head)
+            # alertText is often the first characters of a note without its separators
+            sq = _squash(head)
+            if head and not any(_squash(s).startswith(sq) and _squash(s) != sq for s in notes):
+                texts.append(head)
+        texts.extend(notes)
         seen: set[str] = set()
         out = []
         for s in texts:
