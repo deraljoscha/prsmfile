@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from ..report import Cell, Section
-from ..values import PValue, entries, label
+from ..values import PValue, entries, is_uid, label, num
+
+
+_P_KEYS = ("value", "level", "isSignificant", "state")
 
 
 def _is_p(node) -> bool:
@@ -13,7 +16,10 @@ def _is_collection(node) -> bool:
     return (
         isinstance(node, dict)
         and bool(node)
-        and all(isinstance(v, dict) and "id" in v and "value" in v for v in node.values())
+        and all(
+            is_uid(k) and isinstance(v, dict) and "id" in v and "value" in v
+            for k, v in node.items()
+        )
     )
 
 
@@ -21,7 +27,7 @@ def _leaf(x) -> Cell:
     if isinstance(x, bool) or x is None:
         return x
     if isinstance(x, (int, float)):
-        return x  # ints stay exact, even when too large for a float
+        return num(x)  # inf, nan and ints beyond float range become None
     if x == "undefined":
         return None
     return x if isinstance(x, str) else str(x)
@@ -35,6 +41,12 @@ def flatten(node, prefix: str = "") -> list[list[Cell]]:
         path, cur = stack.pop()
         if _is_p(cur):
             rows.append([path, PValue.from_obj(cur)])
+            extras = [
+                (f"{path}.{k}" if path else str(k), v)
+                for k, v in cur.items()
+                if k not in _P_KEYS
+            ]
+            stack.extend(reversed(extras))
         elif _is_collection(cur):
             children = []
             for id_, value in entries(cur):

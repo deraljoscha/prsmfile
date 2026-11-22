@@ -59,6 +59,8 @@ class Analysis:
     views: list[tuple[str, str | None]] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
 
+    # parameters and results are shared with the cache: treat them as read-only
+
     @property
     def has_results(self) -> bool:
         return self.results is not None
@@ -96,12 +98,9 @@ class PrismFile:
         raw_v = doc.get("formatVersion")
         self.format_version_raw: str | None = raw_v if isinstance(raw_v, str) else None
         self.format_version: tuple[int, ...] = _parse_version(raw_v)
-        if self.format_version_raw is not None and (
-            not self.format_version or self.format_version[0] != 1
-        ):
-            self.warnings.append(
-                f"Unknown format version {self.format_version_raw}; structured readers skipped."
-            )
+        if not self.format_version or self.format_version[0] != 1:
+            raw = self.format_version_raw if self.format_version_raw is not None else "missing"
+            self.warnings.append(f"Unknown format version {raw}; structured readers skipped.")
         self.prism_version = self._version_of("createdBy")
         self.saved_with = self._version_of("modifiedBy")
 

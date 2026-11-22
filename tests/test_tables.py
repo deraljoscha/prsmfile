@@ -320,7 +320,7 @@ def test_raw_tables_listed_order(tmp_path):
         assert pf.data_tables() == list(pick)
 
 
-@pytest.mark.parametrize("bad", [[], ["a", "b"], [5], 5, {"x": 1}, "a/b", "", None])
+@pytest.mark.parametrize("bad", [[], ["a", "b"], [5], 5, {"x": 1}, "a/b", "", None, " ", "invalid-ref"])
 def test_invalid_x_reference_reserves_no_column(tmp_path, bad):
     b = PrismBuilder()
     sid = b.add_raw_table("T", "xy", [("S", "y_single", 1)], [["2"]], x_data_set=("T", "y_single", 1))

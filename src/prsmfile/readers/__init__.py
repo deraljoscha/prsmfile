@@ -52,8 +52,7 @@ def _rendered_sections(pf, a) -> list[Section]:
 
 
 def _major_unknown(pf) -> bool:
-    raw = pf.format_version_raw
-    return raw is not None and (not pf.format_version or pf.format_version[0] != 1)
+    return not pf.format_version or pf.format_version[0] != 1
 
 
 def read_analysis(pf, a) -> Report:

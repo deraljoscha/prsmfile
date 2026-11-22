@@ -1,16 +1,28 @@
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass
+
+_UID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def is_uid(x) -> bool:
+    """True for the UUID-shaped ids Prism uses for sheets, data sets and hash keys."""
+    return isinstance(x, str) and _UID_RE.fullmatch(x) is not None
 
 
 def num(x) -> float | None:
-    """Return x as float; bool, strings (e.g. "undefined") and None give None."""
+    """Return x as float; bool, strings (e.g. "undefined"), None, inf and nan give None."""
     if isinstance(x, bool) or not isinstance(x, (int, float)):
         return None
     try:
-        return float(x)
+        f = float(x)
     except OverflowError:  # int too large for a float
         return None
+    return f if math.isfinite(f) else None  # inf and nan are not data
 
 
 @dataclass(frozen=True)
@@ -86,8 +98,10 @@ def _idx(part) -> float:
 
 
 def _key_of(id_) -> tuple:
+    while isinstance(id_, list) and id_:  # a list id sorts like its first element
+        id_ = id_[0]
     if isinstance(id_, list):
-        return _key_of(id_[0]) if id_ else (float("inf"), float("inf"), (1, ""))
+        return (float("inf"), float("inf"), (1, ""))
     if not isinstance(id_, dict):
         return (float("inf"), float("inf"), (1, ""))
     model = id_.get("model")
@@ -131,10 +145,16 @@ def _row_part(row) -> str:
     return f"{base}:{title}" if title is not None else base
 
 
-def label(id: dict | list, with_letter: bool = True) -> str:
-    """The single way to name a column, row, cell, model or pair."""
+_MAX_LIST_DEPTH = 8
+
+
+def label(id: dict | list, with_letter: bool = True, _depth: int = 0) -> str:
+    """The single way to name a column, row, cell, model or pair.
+    Lists nested deeper than a few levels (never seen in Prism files) label as ""."""
     if isinstance(id, list):
-        return " vs ".join(label(x, with_letter) for x in id)
+        if _depth >= _MAX_LIST_DEPTH:
+            return ""
+        return " vs ".join(label(x, with_letter, _depth + 1) for x in id)
     if not isinstance(id, dict):
         return ""
     parts: list[str] = []

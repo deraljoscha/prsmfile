@@ -5,7 +5,7 @@ import csv
 import io
 from dataclasses import dataclass, field
 
-from .values import dataset_title, int_idx, letter
+from .values import dataset_title, int_idx, is_uid, letter
 
 _SUBCOLUMNS = {
     "y_sd_n": ("Mean", "SD", "N"),
@@ -110,7 +110,7 @@ def _declared_headers(pf, table: dict) -> list[str]:
     if table.get("rowTitlesDataSet"):
         cols.append("Row title")
     xuid = table.get("xDataSet")
-    if isinstance(xuid, str) and xuid and "/" not in xuid:  # only a valid uid reserves X
+    if is_uid(xuid):  # only a UUID-shaped reference reserves an X column
         x = _read_set(pf, xuid)
         # a missing x file still reserves its column(s): Y headers must not shift
         xfmt = _fmt(x.get("format")) if x is not None else None
