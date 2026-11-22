@@ -81,15 +81,15 @@ def _idx(part) -> float:
 
 def _key_of(id_) -> tuple:
     if isinstance(id_, list):
-        return _key_of(id_[0]) if id_ else (float("inf"),) * 2 + ("￿",)
+        return _key_of(id_[0]) if id_ else (float("inf"), float("inf"), (1, ""))
     if not isinstance(id_, dict):
-        return (float("inf"), float("inf"), "￿")
+        return (float("inf"), float("inf"), (1, ""))
     model = id_.get("model")
     name = model.get("name") if isinstance(model, dict) else None
     return (
         _idx(id_.get("row")),
         _idx(id_.get("col")),
-        name if isinstance(name, str) else "￿",
+        (0, name) if isinstance(name, str) else (1, ""),
     )
 
 
