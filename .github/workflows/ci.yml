@@ -31,9 +31,8 @@ jobs:
           python -m venv "$RUNNER_TEMP/smoke"
           "$RUNNER_TEMP/smoke/bin/python" -m pip install dist/*.whl
           "$RUNNER_TEMP/smoke/bin/prsmfile" --version
-          if [ -f examples/cc0-figure4.prism ]; then
-            "$RUNNER_TEMP/smoke/bin/prsmfile" examples/cc0-figure4.prism --list
-          fi
+          "$RUNNER_TEMP/smoke/bin/prsmfile" examples/example.prism
+          "$RUNNER_TEMP/smoke/bin/prsmfile" examples/example.prism --json
 
   sdist:
     runs-on: ubuntu-latest

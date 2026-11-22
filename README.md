@@ -24,69 +24,95 @@ This will become `pip install prsmfile` once the package is published.
 prsmfile FILE [--list] [--json] [--csv DIR] [--data] [--analysis TEXT]
 ```
 
-List the analyses and whether results are stored:
+List the analyses and whether results are stored. The numbers are stable: every output uses
+the number shown here, also when `--analysis` selects a subset.
 
 ```
-$ prsmfile examples/cc0-figure4.prism --list
-01  NORMALITY_TESTS  calculated  Normality and Lognormality Tests of Frequency
-02  T_TESTS_AND_NONPARAMETRIC  calculated  Mann-Whitney test of Frequency
-...
-05  NORMALITY_TESTS  calculated  Normality and Lognormality Tests of WT Baseline
-06  T_TESTS_AND_NONPARAMETRIC  calculated  Welch's t test of WT Baseline
-...
-10  T_TESTS_AND_NONPARAMETRIC  no stored results  Kolmogorov-Smirnov test
-...
+$ prsmfile examples/example.prism --list
+01  T_TESTS_AND_NONPARAMETRIC  calculated  Welch's t test of Lysozyme activity
+02  ONE_WAY_ANOVA  calculated  Ordinary one-way ANOVA of Shoot dry mass
+03  NORMALITY_TESTS  calculated  Normality and Lognormality Tests of Shoot dry mass
+04  TWO_WAY_ANOVA  calculated  Ordinary two-way ANOVA of Root length
+05  AREA_UNDER_CURVE  calculated  Area under the curve of Tracer clearance
 ```
 
-Show one analysis as text tables (`--analysis` matches a case-insensitive part of the title):
+Show one analysis as text tables. `--analysis` takes the number from `--list` (`02`), an
+analysis id, or else a case-insensitive part of the title:
 
 ```
-$ prsmfile examples/cc0-figure4.prism --analysis "Welch's t test of WT"
-File: examples/cc0-figure4.prism
-created with Prism 10.0.0.153, saved with Prism 10.0.0.153, format 1-0-0
+$ prsmfile examples/example.prism --analysis 02
+File: examples/example.prism
+created with Prism 11.1.0.224, saved with Prism 11.1.0.224, format 1-6-1
 
-== 01 Welch's t test of WT Baseline [T_TESTS_AND_NONPARAMETRIC] ==
+== 02 Ordinary one-way ANOVA of Shoot dry mass [ONE_WAY_ANOVA] ==
 
 Parameters
-Name            Value
---------------  ------------
-Design          WELCH_T_TEST
-Tails           two
-Swap direction  yes
+Name                    Value
+----------------------  --------------
+Design                  ORDINARY_ANOVA
+Post test design        ALL_VS_ALL
+Method                  Tukey
+Comparisons per family  3
 
-Test
-Test                         Statistic  Value    df      P
----------------------------  ---------  -------  ------  --------
-Welch's t test               t          4.81936  8.7456  0.001028
-F test to compare variances  F          1.01646  5, 16   0.8805
+ANOVA
+Source     SS       df  MS       F        DFn  DFd  P          R squared
+---------  -------  --  -------  -------  ---  ---  ---------  ---------
+Treatment  5364.56  2   2682.28  37.1094  2    15   1.557e-06  0.831874
+Residual   1084.21  15  72.2803
+Total      6448.77  17
 ...
 ```
+
+`examples/example.prism` is a synthetic file with invented data, see `examples/README.md`.
 
 Other outputs:
 
 ```
-prsmfile FILE --json                # everything as one JSON document
+prsmfile FILE --json                # the report sections as one JSON document
 prsmfile FILE --json --data         # plus the raw data tables
 prsmfile FILE --csv out_dir         # one CSV per section, plus index.csv
 ```
 
+`--json` holds what the readers extract, not every stored number: for example the covariances
+of a nonlinear regression are not in it. Use `Analysis.results` from Python for the complete
+stored values. Text and CSV show the p-value number (with a `>` for a bound), JSON also carries
+the stored significance verdict and alpha of each p-value. Text and CSV write booleans as
+`yes` and `no`, JSON as `true` and `false`.
+
 `--csv` writes into a new or empty directory. It builds the files in a temporary directory
-next to the target and renames it at the end, so a failed export leaves nothing behind and an
-existing non-empty directory is never touched. Exit status is 1 for unreadable files and other
-errors, 2 for wrong command line options.
+next to the target and renames it at the end, so a failed export leaves nothing behind (also
+no parent directories it created) and an existing non-empty directory is never touched. Exit
+status is 1 for unreadable files and other errors, 2 for wrong command line options
+(`--list` cannot be combined with `--data`).
 
 ## Python
 
 ```python
 import prsmfile
 
-with prsmfile.open("examples/cc0-figure4.prism") as pf:
+with prsmfile.open("examples/example.prism") as pf:
     for a in pf.analyses():
         print(prsmfile.read_analysis(pf, a).to_dict())
 ```
 
 `read_analysis` returns a `Report` with a `kind` (`structured`, `generic` or `not_calculated`),
-a list of `Section`s (title, columns, rows, optional note) and warnings.
+a list of `Section`s (title, columns, rows, optional note) and warnings. `pf.analyses()` returns
+copies: changing `a.results` or `a.parameters` does not affect later calls.
+
+Raw data tables and rendered result tables:
+
+```python
+with prsmfile.open("examples/example.prism") as pf:
+    for sheet_id in pf.data_tables():           # raw data tables, in the listed order
+        table = prsmfile.read_table(pf, sheet_id)  # Table: title, columns, rows (strings)
+    a = pf.analyses()[0]
+    for name, data_sheet_id in a.views:         # Prism's rendered result views of an analysis
+        table = pf.result_table(data_sheet_id)  # None if the sheet is not a result view
+```
+
+Readers live in a registry, `prsmfile.readers.REGISTRY` (analysis class to function).
+`prsmfile.readers.register("CLASS")` adds one for the whole process, and registering a class that
+already has a reader replaces it (see `docs/readers.md`).
 
 ## Supported analyses
 
@@ -100,8 +126,9 @@ analysis families:
 - area under curve
 
 Every other analysis class, and every analysis whose stored layout a structured reader cannot
-handle, goes through a generic reader that lists all stored values as `path, value` rows, so
-nothing is dropped silently.
+handle, goes through a generic reader that lists all stored values as `path, value` rows. A
+structured reader adds an "Other values" section with the stored values it has no column for,
+so nothing is dropped silently.
 
 ## Known limitations
 

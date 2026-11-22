@@ -2,5 +2,6 @@ graft tests
 graft docs
 graft examples
 include scripts/fetch_corpus.py
+include scripts/make_example.py
 prune docs/plans
 global-exclude __pycache__ *.py[cod]

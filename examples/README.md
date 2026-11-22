@@ -1,15 +1,32 @@
 # Example file
 
-`cc0-figure4.prism` is an unchanged copy of `Figure_4_-_analysis_file.prism` from the Zenodo
-record <https://zenodo.org/records/8356786>, released under CC0 1.0 (public domain dedication).
+`example.prism` is a synthetic file in Prism's format. It was **not saved by Prism**: the script
+`scripts/make_example.py` builds it with the test helper `tests/builder.py`. All data are
+invented lab-style numbers, there is no real person or experiment behind them, and the file
+carries only the user name `prsmfile-example` and no paths.
 
-Dataset: "Disease-associated KCNMA1 variants decrease circadian clock robustness in channelopathy
-mouse models", created by Ria Dinsdale, Cooper Roache and Andrea Meredith (University of
-Maryland). The creator list was fetched once from <https://zenodo.org/api/records/8356786> and is
-also stored in `tests/corpus_manifest.json`.
+It holds five analyses over four data tables:
+
+1. Welch's t test (two groups, n = 6)
+2. ordinary one-way ANOVA with Tukey comparisons (three groups, n = 6)
+3. normality tests (Shapiro-Wilk), a class without a dedicated reader, shown by the generic reader
+4. ordinary two-way ANOVA (2 x 3, n = 4) with Bonferroni-Sidak comparisons
+5. area under one curve
+
+Every stored statistic is computed from the data in the script, with scipy 1.18.1 and
+statsmodels 0.15.0 (development-only tools, not dependencies of prsmfile). The script header
+says which library computed which number. To regenerate the file:
+
+```
+uv run --with scipy --with statsmodels python scripts/make_example.py
+```
+
+The output is byte-identical on every run. `tests/test_examples.py` reads the file and checks
+the key values against the numbers the script computes.
 
 Try it:
 
 ```
-prsmfile examples/cc0-figure4.prism --list
+prsmfile examples/example.prism --list
+prsmfile examples/example.prism --analysis 02
 ```
