@@ -227,8 +227,8 @@ def test_unsupported_zip_feature(tmp_path, monkeypatch):
 
 def test_permission_denied(tmp_path):
     import os
-    if os.geteuid() == 0:
-        pytest.skip("root ignores file modes")
+    if not hasattr(os, "geteuid") or os.geteuid() == 0:
+        pytest.skip("file modes not enforced (Windows or root)")
     p = PrismBuilder().save(tmp_path / "a.prism")
     p.chmod(0)
     try:
@@ -314,10 +314,48 @@ def test_views_order_float_idx_missing_datasheet_blank_name(tmp_path):
 
 def test_two_listed_analyses_keep_listed_order(tmp_path):
     b = PrismBuilder()
-    b.add_analysis("Zeta", "ONE_WAY_ANOVA", {}, {"status": {}})
-    b.add_analysis("Alpha", "ONE_WAY_ANOVA", {}, {"status": {}})
-    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+    z = b.add_analysis("Zeta", "ONE_WAY_ANOVA", {}, {"status": {}})
+    a = b.add_analysis("Alpha", "ONE_WAY_ANOVA", {}, {"status": {}})
+    p = b.save(tmp_path / "a.prism")
+    # rewrite the zip with the analysis members in reverse order
+    with zipfile.ZipFile(p) as zf:
+        items = [(n, zf.read(n)) for n in zf.namelist()]
+    assert [x for x in (z, a)] == json.loads(dict(items)["document.json"])["sheets"]["analyses"]
+    items.sort(key=lambda it: (it[0] != "document.json", a not in it[0], it[0]))
+    with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as zf:
+        for n, d in items:
+            zf.writestr(n, d)
+    with zipfile.ZipFile(p) as zf:
+        names = [n for n in zf.namelist() if n.endswith("/sheet.json") and n.startswith("analyses/")]
+    assert names.index(f"analyses/{a}/sheet.json") < names.index(f"analyses/{z}/sheet.json")
+    with prsmfile.open(p) as pf:
         assert [x.title for x in pf.analyses()] == ["Zeta", "Alpha"]
+
+
+def test_view_idx_sorts_by_any_number(tmp_path):
+    b = PrismBuilder()
+    aid = b.add_analysis("A1", "ONE_WAY_ANOVA", {}, {"status": {}},
+                         views=[("a", [["x"]]), ("b", [["y"]]), ("c", [["z"]])])
+    base = f"analyses/{aid}/result_sheets/"
+    sheet = json.loads(b._members[f"analyses/{aid}/sheet.json"])
+    uids = [r["uid"] for r in sheet["resultSheets"]]
+    for uid, name, idx in zip(uids, "abc", (2, 0.5, 1)):
+        b.add_member(base + f"{uid}.json", json.dumps(
+            {"@class": "AnalysisView", "uid": uid, "name": name, "viewIdx": idx, "dataSheet": "S"}).encode())
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        assert [v[0] for v in pf.analyses()[0].views] == ["b", "c", "a"]
+
+
+def test_result_sheet_uid_with_slash_ignored(tmp_path):
+    b = PrismBuilder()
+    aid = b.add_analysis("A1", "ONE_WAY_ANOVA", {}, {"status": {}}, views=[("Real", [["x"]])])
+    sheet = json.loads(b._members[f"analyses/{aid}/sheet.json"])
+    sheet["resultSheets"].append({"uid": "sub/evil", "title": "bad"})
+    b.add_member(f"analyses/{aid}/sheet.json", json.dumps(sheet).encode())
+    b.add_member(f"analyses/{aid}/result_sheets/sub/evil.json", json.dumps(
+        {"@class": "AnalysisView", "name": "Evil", "viewIdx": 0, "dataSheet": "S"}).encode())
+    with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
+        assert [v[0] for v in pf.analyses()[0].views] == ["Real"]
 
 
 def test_results_kept_when_is_calculated_missing(tmp_path):

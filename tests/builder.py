@@ -8,6 +8,19 @@ import uuid
 import zipfile
 from pathlib import Path
 
+# subcolumns per data-set format (docs/format.md 1.7); all others are 1
+_WIDTH = {"y_sd_n": 3, "y_sd": 2, "y_se": 2, "y_plus_minus": 3, "date_se": 2, "y_errorBar": 2}
+
+
+def _letter_index(ltr) -> int:
+    """Spreadsheet letters to a 0-based index (A 0, Z 25, AA 26); -1 if not letters."""
+    if not isinstance(ltr, str) or not ltr.isalpha() or not ltr.isascii():
+        return -1
+    n = 0
+    for ch in ltr.upper():
+        n = n * 26 + (ord(ch) - ord("A") + 1)
+    return n - 1
+
 
 class PrismBuilder:
     def __init__(self):
@@ -157,16 +170,20 @@ class PrismBuilder:
             ltr, ititle = item[0], item[1]
             ref = item[2] if len(item) > 2 else None
             if ref is None and self._last_raw is not None:
-                col = ord(ltr[0]) - ord("A") if len(ltr) == 1 and ltr.isalpha() else -1
-                ref = (self._last_raw, col)
+                ref = (self._last_raw, _letter_index(ltr))
             uid = self._uid()  # dangling unless a real data set is referenced
             if isinstance(ref, str):
                 uid = ref
+                for sid, ids in self._sets.items():  # owning sheet, if any
+                    if ref in ids and sid not in input_sheets:
+                        input_sheets.append(sid)
             elif isinstance(ref, tuple) and 0 <= ref[1] < len(self._sets.get(ref[0], [])):
                 uid = self._sets[ref[0]][ref[1]]
                 if ref[0] not in input_sheets:
                     input_sheets.append(ref[0])
-            entry = {"uid": uid, "idx": ltr}
+            entry = {"uid": uid}
+            if ltr is not None:
+                entry["idx"] = ltr
             if ititle is not None:
                 entry["title"] = ititle
             sheet["inputDataSets"].append(entry)
@@ -184,10 +201,13 @@ class PrismBuilder:
         for idx, view in enumerate(views):
             name, vrows = view[0], view[1]
             fmt = view[2] if len(view) > 2 else "text"
+            ncols = view[3] if len(view) > 3 else None  # csv column count
             v, r = self._uid(), self._uid()
             tuid = self._uid() if vrows is None else self._write_table(vrows)
-            ncols = 1 if vrows is None else max((len(x) for x in vrows), default=0)
-            vsets = [self._write_set(None, fmt, 1) for _ in range(ncols)]
+            if ncols is None:
+                ncols = 1 if vrows is None else max((len(x) for x in vrows), default=0)
+            w = _WIDTH.get(fmt, 1)
+            vsets = [self._write_set(None, fmt, w) for _ in range(-(-ncols // w))]
             sheet["resultSheets"].append({"uid": v, "title": name})
             self._members[base + f"result_sheets/{v}.json"] = self._dump(
                 {"@class": "AnalysisView", "uid": v, "name": name, "viewIdx": idx, "dataSheet": r}

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import zipfile
 import zlib
 from dataclasses import dataclass, field
 
 from .errors import PrismFormatError
-from .values import int_idx, letter
+from .values import letter, num
 
 _SHEET_RE = re.compile(r"analyses/([^/]+)/sheet\.json")
 _READ_ERRORS = (
@@ -203,14 +204,16 @@ class PrismFile:
         uids: list[str] = []
         for r in refs if isinstance(refs, list) else []:
             uid = r.get("uid") if isinstance(r, dict) else None
-            if isinstance(uid, str) and uid not in uids:
+            if isinstance(uid, str) and "/" not in uid and uid not in uids:
                 uids.append(uid)
         out = []
         for uid in uids:
             v = self.read_json(f"{base}result_sheets/{uid}.json")
             if v is None:
                 continue
-            key = int_idx(v.get("viewIdx"))
+            key = num(v.get("viewIdx"))
+            if key is not None and not math.isfinite(key):
+                key = None
             name = v.get("name")
             ds = v.get("dataSheet")
             out.append((

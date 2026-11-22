@@ -55,3 +55,77 @@ def test_raw_table_shape(tmp_path):
     t2 = js(m, f"data/sheets/{sid2}/sheet.json")["table"]
     assert t2["@class"] == "DataTable" and t2["dataFormat"] == "text"
     assert js(m, f"data/sheets/{sid3}/sheet.json")["table"]["dataSets"] == []
+
+
+def test_numeric_view_data_set_widths(tmp_path):
+    b = PrismBuilder()
+    cases = [("y_sd_n", 6, [("y_sd_n", 3)] * 2), ("y_sd", 4, [("y_sd", 2)] * 2),
+             ("y_se", 2, [("y_se", 2)]), ("y_plus_minus", 3, [("y_plus_minus", 3)]),
+             ("date_se", 4, [("date_se", 2)] * 2), ("y_errorBar", 2, [("y_errorBar", 2)]),
+             ("y_single", 2, [("y_single", 1)] * 2), ("text", 2, [("text", 1)] * 2)]
+    for i, (fmt, n, _) in enumerate(cases):
+        b.add_analysis(f"A{i}", "ONE_WAY_ANOVA", {}, None, views=[("V", [list("abcdef"[:n])], fmt)])
+    m = members(b.save(tmp_path / "a.prism"))
+    got = {}
+    for name in sorted(n for n in m if "/result_sheets/" in n):
+        view = js(m, name)
+        table = js(m, f"data/sheets/{view['dataSheet']}/sheet.json")["table"]
+        sets = [js(m, f"data/sets/{u}.json") for u in table["dataSets"]]
+        got[table["dataFormat"]] = [(d["format"], len(d["replicates"])) for d in sets]
+    assert got == {fmt: exp for fmt, _, exp in cases}
+
+
+def test_empty_view_declares_data_sets(tmp_path):
+    b = PrismBuilder()
+    b.add_analysis("A", "ONE_WAY_ANOVA", {}, None, views=[("V", [], "y_sd_n", 6)])
+    b.add_analysis("B", "ONE_WAY_ANOVA", {}, None, views=[("V", [], "text", 2)])
+    m = members(b.save(tmp_path / "a.prism"))
+    got = []
+    for name in sorted(n for n in m if "/result_sheets/" in n):
+        view = js(m, name)
+        t = js(m, f"data/sheets/{view['dataSheet']}/sheet.json")["table"]
+        got.append((t["dataFormat"], len(t["dataSets"])))
+    assert sorted(got) == [("text", 2), ("y_sd_n", 2)]
+
+
+def test_input_autolink_multi_letter_and_none(tmp_path):
+    b = PrismBuilder()
+    sets = [(f"c{i}", "y_single", 1) for i in range(28)]
+    sid = b.add_raw_table("Wide", "column", sets, [["1"] * 28])
+    aid = b.add_analysis("An", "ONE_WAY_ANOVA", {}, None,
+                         inputs=[("AA", "c26"), (None, "nolabel"), ("B", None)])
+    m = members(b.save(tmp_path / "a.prism"))
+    sheet = js(m, f"analyses/{aid}/sheet.json")
+    ids = b.data_sets(sid)
+    assert sheet["inputDataSets"][0]["uid"] == ids[26]
+    assert "idx" not in sheet["inputDataSets"][1]
+    assert sheet["inputDataSets"][2]["uid"] == ids[1]
+
+
+def test_explicit_uid_ref_adds_owning_sheet(tmp_path):
+    b = PrismBuilder()
+    s1 = b.add_raw_table("One", "column", [("a", "y_single", 1)], [["1"]])
+    s2 = b.add_raw_table("Two", "column", [("b", "y_single", 1)], [["2"]])
+    uid = b.data_sets(s1)[0]
+    aid = b.add_analysis("An", "ONE_WAY_ANOVA", {}, None, inputs=[("A", "a", uid)])
+    m = members(b.save(tmp_path / "a.prism"))
+    assert js(m, f"analyses/{aid}/sheet.json")["inputSheets"] == [{"uid": s1, "title": "One"}]
+
+
+def test_saved_zip_structure(tmp_path):
+    b = PrismBuilder()
+    s1 = b.add_raw_table("Raw", "column", [("a", "y_single", 1)], [["1"]])
+    aid = b.add_analysis("An", "ONE_WAY_ANOVA", {}, None, views=[("V", [["x"]])])
+    p = b.save(tmp_path / "a.prism")
+    with zipfile.ZipFile(p) as z:
+        assert all(i.compress_type == zipfile.ZIP_DEFLATED for i in z.infolist())
+    m = members(p)
+    doc = js(m, "document.json")
+    assert doc["sheets"]["data"] == [s1]  # raw tables only, no result sheets
+    assert doc["sheets"]["analyses"] == [aid]
+    table_uid = js(m, f"data/sheets/{s1}/sheet.json")["table"]["uid"]
+    assert table_uid != s1
+    assert f"data/tables/{table_uid}/data.csv" in m
+    view = js(m, [n for n in m if "/result_sheets/" in n][0])
+    rt = js(m, f"data/sheets/{view['dataSheet']}/sheet.json")["table"]["uid"]
+    assert rt != view["dataSheet"]
