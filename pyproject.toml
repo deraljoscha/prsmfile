@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prsmfile"
+version = "0.1.0"
+description = "Read GraphPad Prism .prism files (results and data tables) without Prism"
+requires-python = ">=3.10"
+license = "MIT"
+classifiers = [
+    "Topic :: Scientific/Engineering",
+]
+
+[project.scripts]
+prsmfile = "prsmfile.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
