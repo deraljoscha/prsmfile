@@ -93,4 +93,4 @@ def read_analysis(pf, a) -> Report:
 __all__ = ["REGISTRY", "register", "read_analysis", "flatten", "generic_sections"]
 
 
-from . import oneway, ttest, twoway  # noqa: E402,F401  (registers the readers)
+from . import auc, nonlinear, oneway, ttest, twoway  # noqa: E402,F401  (registers the readers)
