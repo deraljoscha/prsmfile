@@ -210,3 +210,53 @@ def test_garbage_reml_does_not_raise(tmp_path):
 def test_no_tests_has_no_comparisons(tmp_path):
     r = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}}))
     assert "Multiple comparisons" not in titles(r)
+
+
+def test_glm_without_subjects_row_warns(tmp_path):
+    m = {"anovaTable": {"rowFactor": node(1, 1, 1)}}
+    r = run(tmp_path, res(m, GLM), {"experimentalDesign": "REPEATED_MEASURES_BY_BOTH_FACTORS"})
+    assert "Subjects row only in Prism's rendered table (view ANOVA results)." in r.warnings
+
+
+def test_no_subjects_warning_when_present_or_not_glm(tmp_path):
+    m = {"anovaTable": {"rowFactor": node(1, 1, 1), "matchedFactor": node(9, 3, 3.0)}}
+    assert run(tmp_path, res(m, GLM)).warnings == []
+    assert run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}})).warnings == []
+
+
+def test_gg_epsilon_column(tmp_path):
+    t = {"rowFactor": {**node(1, 1, 1, 10.0, 5.0), "ggEpsilon": 0.53}, "residual": node(4, 12, 0.3, 40.0)}
+    r = run(tmp_path, res({"anovaTable": t, "matchedFactor": 1}, GLM))
+    s = sec(r, "ANOVA")
+    assert s.columns[-1] == "GG epsilon" and len(s.columns) == 10
+    assert [row[-1] for row in s.rows] == [0.53, None]
+    t2 = {"rowFactor": node(1, 1, 1, 10.0, 5.0)}
+    assert sec(run(tmp_path, res({"anovaTable": t2})), "ANOVA").columns[-1] == "P"
+
+
+def test_families_parameters(tmp_path):
+    mc = {"status": "VALID", "method": "Sidak", "familyCount": 5, "comparisonPerFamilyCount": 0}
+    r = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}, "multipleComparisons": mc}))
+    rows = sec(r, "Parameters").rows
+    assert ["Comparison families", 5.0] in rows and ["Comparisons per family", 0.0] in rows
+
+
+def test_compact_letter_display(tmp_path):
+    cld = {"samples": {"a": {"id": cellid(1, "T", 0, "WT"), "value": "B"},
+                       "b": {"id": cellid(0, "E", 0, "WT"), "value": "A"}}}
+    r = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}, "compactLetterDisplay": cld}))
+    s = sec(r, "Compact letter display")
+    assert s.columns == ["Cell", "Group"]
+    assert s.rows == [["row 1:E A:WT", "A"], ["row 2:T A:WT", "B"]]
+
+
+def test_comparison_sample_columns(tmp_path):
+    id1, id2 = cellid(0, "Day 1", 0, "WT"), cellid(0, "Day 1", 1, "KO")
+    c = comp(0.5)
+    c["sample1"], c["sample2"] = {"value": {"mean": 3.0, "n": 4}}, {"value": {"mean": 2.5, "n": 5}}
+    mcs = {"status": "VALID", "method": "Sidak",
+           "tests": PrismBuilder.keyed([(id1, PrismBuilder.keyed([(id2, c)]))])}
+    r = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}, "multipleComparisons": mcs}))
+    s = sec(r, "Multiple comparisons (Sidak)")
+    assert s.columns[:5] == ["Comparison", "Mean 1", "n 1", "Mean 2", "n 2"]
+    assert s.rows[0][1:5] == [3.0, 4.0, 2.5, 5.0]

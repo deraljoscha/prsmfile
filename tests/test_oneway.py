@@ -122,9 +122,10 @@ def test_tukey_comparisons(tmp_path):
     m = model(multipleComparisons=mc("Tukey", [((0, "ctrl"), (1, "asp"), pair(-4.3125, p_adj=0.06))]))
     r = run(tmp_path, res(m))
     s = sec(r, "Multiple comparisons (Tukey)")
-    assert s.columns == ["Comparison", "Mean diff", "SE", "CI lower", "CI upper", "CI level",
-                         "Statistic", "df", "P adjusted", "P individual"]
-    assert s.rows == [["A:ctrl vs B:asp", -4.3125, 1.5, -8.0, 0.1, 95.0, 4.0, 12.0, pv(0.06), None]]
+    assert s.columns == ["Comparison", "Mean 1", "n 1", "Mean 2", "n 2", "Mean diff", "SE",
+                         "CI lower", "CI upper", "CI level", "Statistic", "df", "P adjusted",
+                         "P individual"]
+    assert s.rows == [["A:ctrl vs B:asp", 3.0, 4.0, 7.0, 4.0, -4.3125, 1.5, -8.0, 0.1, 95.0, 4.0, 12.0, pv(0.06), None]]
     assert ["Method", "Tukey"] in sec(r, "Parameters").rows
 
 
@@ -142,7 +143,7 @@ def test_no_correction_individual_p(tmp_path):
     m = model(multipleComparisons=mc("No correction", [((0, "ctrl"), (1, "asp"), pair(-4.0, p_ind=0.03, ci=False))]))
     r = run(tmp_path, res(m))
     s = sec(r, "Multiple comparisons (No correction)")
-    assert s.rows == [["A:ctrl vs B:asp", -4.0, 1.5, None, None, None, 4.0, 12.0, None, pv(0.03)]]
+    assert s.rows == [["A:ctrl vs B:asp", 3.0, 4.0, 7.0, 4.0, -4.0, 1.5, None, None, None, 4.0, 12.0, None, pv(0.03)]]
 
 
 def test_comparisons_without_method(tmp_path):
@@ -197,3 +198,19 @@ def test_garbage_values_do_not_raise(tmp_path):
          "multipleComparisons": {"method": 7, "tests": {"k": {"id": {}, "value": {"h": {"id": {}, "value": 5}}}}}}
     r = run(tmp_path, res(m))
     assert r.kind == "structured"
+
+
+def test_families_parameters(tmp_path):
+    m = mc("Tukey", [((0, "ctrl"), (1, "asp"), pair(-4.0, p_adj=0.5))])
+    m["familyCount"], m["comparisonPerFamilyCount"] = 1, 6
+    r = run(tmp_path, res(model(multipleComparisons=m)))
+    rows = sec(r, "Parameters").rows
+    assert ["Comparison families", 1.0] in rows and ["Comparisons per family", 6.0] in rows
+
+
+def test_compact_letter_display(tmp_path):
+    cld = {"status": "VALID", "letterCount": 2, "sampleCount": 2, "samples": {
+        "k1": {"id": colid(1, "asp"), "value": "B"}, "k0": {"id": colid(0, "ctrl"), "value": "A B"}}}
+    r = run(tmp_path, res(model(compactLetterDisplay=cld)))
+    s = sec(r, "Compact letter display")
+    assert s.columns == ["Cell", "Group"] and s.rows == [["A:ctrl", "A B"], ["B:asp", "B"]]

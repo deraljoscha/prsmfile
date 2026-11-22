@@ -58,30 +58,35 @@ def _dict(x) -> dict:
     return x if isinstance(x, dict) else {}
 
 
-def anova_columns(variation: bool) -> list[str]:
+def anova_columns(variation: bool, epsilon: bool = False) -> list[str]:
+    """variation=False: ... "R squared"; variation=True: "% of total" instead.
+    epsilon=True appends "GG epsilon" (Greenhouse-Geisser, stored as ggEpsilon)."""
     if variation:
-        return ["Source", "SS", "df", "MS", "% of total", "F", "DFn", "DFd", "P"]
-    return ["Source", "SS", "df", "MS", "F", "DFn", "DFd", "P", "R squared"]
+        cols = ["Source", "SS", "df", "MS", "% of total", "F", "DFn", "DFd", "P"]
+    else:
+        cols = ["Source", "SS", "df", "MS", "F", "DFn", "DFd", "P", "R squared"]
+    return cols + ["GG epsilon"] if epsilon else cols
 
 
-def anova_row(source: str, node: dict, variation: bool) -> list[Cell]:
+def anova_row(source: str, node: dict, variation: bool, epsilon: bool = False) -> list[Cell]:
     """One ANOVA table row; every field via .get and num. `variation` is Prism's percent of total."""
     node = _dict(node)
     f = _dict(node.get("fTest"))
     head = [source, num(node.get("ss")), num(node.get("df")), num(node.get("ms"))]
     test = [num(f.get("f")), num(f.get("dfNumerator")), num(f.get("dfDenominator")),
             PValue.from_obj(f.get("pValue"))]
-    if variation:
-        return head + [num(node.get("variation"))] + test
-    return head + test + [num(node.get("r2"))]
+    row = head + [num(node.get("variation"))] + test if variation else head + test + [num(node.get("r2"))]
+    return row + [num(node.get("ggEpsilon"))] if epsilon else row
 
 
-COMPARISON_COLUMNS = ["Comparison", "Mean diff", "SE", "CI lower", "CI upper", "CI level",
+COMPARISON_COLUMNS = ["Comparison", "Mean 1", "n 1", "Mean 2", "n 2", "Mean diff", "SE", "CI lower", "CI upper", "CI level",
                       "Statistic", "df", "P adjusted", "P individual"]
 
 
 def comparisons_section(mc: dict) -> Section:
-    """Pairwise multiple comparisons; Mean diff is the stored sample1 - sample2."""
+    """Pairwise multiple comparisons. Columns: Comparison, Mean 1, n 1, Mean 2, n 2 (sample1 and
+    sample2 mean and n), Mean diff (stored sample1 - sample2), SE, CI lower/upper/level, Statistic,
+    df, P adjusted, P individual."""
     mc = _dict(mc)
     method = mc.get("method")
     title = f"Multiple comparisons ({method})" if isinstance(method, str) and method.strip() \
@@ -92,11 +97,30 @@ def comparisons_section(mc: dict) -> Section:
             if not isinstance(value, dict):
                 continue
             lo, hi, level = ci(value.get("meansDifferenceCI"))
+            s1 = _dict(_dict(value.get("sample1")).get("value"))
+            s2 = _dict(_dict(value.get("sample2")).get("value"))
             rows.append([
                 f"{label(id1)} vs {label(id2)}",
+                num(s1.get("mean")), num(s1.get("n")), num(s2.get("mean")), num(s2.get("n")),
                 num(value.get("meansDifference")), num(value.get("meansDifferenceSE")),
                 lo, hi, level, num(value.get("statistic")), num(value.get("df")),
                 PValue.from_obj(value.get("pValueAdjusted")),
                 PValue.from_obj(value.get("pValueIndividual")),
             ])
     return Section(title, list(COMPARISON_COLUMNS), rows)
+
+
+def family_rows(mc: dict) -> list[tuple[str, Cell]]:
+    """Parameters rows from multipleComparisons.familyCount and comparisonPerFamilyCount."""
+    mc = _dict(mc)
+    return [("Comparison families", num(mc.get("familyCount"))),
+            ("Comparisons per family", num(mc.get("comparisonPerFamilyCount")))]
+
+
+def letters_section(cld) -> Section | None:
+    """Compact letter display: one row per sample, Group = the stored letters."""
+    rows: list[list[Cell]] = []
+    for id_, value in entries(_dict(_dict(cld).get("samples"))):
+        if isinstance(value, str) and value.strip():
+            rows.append([label(id_), value])
+    return Section("Compact letter display", ["Cell", "Group"], rows) if rows else None

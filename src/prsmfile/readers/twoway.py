@@ -8,11 +8,14 @@ from .common import (
     anova_columns,
     anova_row,
     comparisons_section,
+    family_rows,
+    letters_section,
     parameters_section,
 )
 from .generic import flatten
 
 _MODELS = ("ordinaryAnovaModel", "repeatedMeasuresGlmAnovaModel", "repeatedMeasuresRemlAnovaModel")
+_GLM = "repeatedMeasuresGlmAnovaModel"
 _REML = "repeatedMeasuresRemlAnovaModel"
 _ANOVA_ROWS = (
     ("rowFactorVsColFactor", "Interaction"),
@@ -44,9 +47,10 @@ def _bool(x) -> bool | None:
 
 def _anova_section(table: dict) -> Section | None:
     known = {k for k, _ in _ANOVA_ROWS}
-    rows = [anova_row(name, table[key], True) for key, name in _ANOVA_ROWS if key in table]
-    rows += [anova_row(str(k), v, True) for k, v in table.items() if k not in known]
-    return Section("ANOVA", anova_columns(True), rows) if rows else None
+    eps = any("ggEpsilon" in v for v in table.values() if isinstance(v, dict))
+    rows = [anova_row(name, table[key], True, eps) for key, name in _ANOVA_ROWS if key in table]
+    rows += [anova_row(str(k), v, True, eps) for k, v in table.items() if k not in known]
+    return Section("ANOVA", anova_columns(True, eps), rows) if rows else None
 
 
 def _fixed_section(fixed: dict) -> Section | None:
@@ -106,6 +110,7 @@ def read_twoway(pf, a, warn):
         ("Assume sphericity", _bool(rm.get("assumeSphericity"))),
         ("Post test design", _str(post.get("meansDesignType"))),
         ("Method", _str(mc.get("method"))),
+        *family_rows(mc),
         ("Row factor", _str(names.get("rowFactor"))),
         ("Column factor", _str(names.get("colFactor"))),
     ])
@@ -116,11 +121,17 @@ def read_twoway(pf, a, warn):
                  _random_section(_dict(model.get("randomEffects"))),
                  _matching_section(model.get("matchingTest")) if "matchingTest" in model else None]
     else:
-        parts = [_anova_section(_dict(model.get("anovaTable")))]
+        table = _dict(model.get("anovaTable"))
+        parts = [_anova_section(table)]
+        if key == _GLM and "matchedFactor" not in table:
+            warn("Subjects row only in Prism's rendered table (view ANOVA results).")
     sections.extend(s for s in parts if s is not None)
     comparisons = comparisons_section(mc)
     if comparisons.rows:
         sections.append(comparisons)
+    letters = letters_section(model.get("compactLetterDisplay"))
+    if letters is not None:
+        sections.append(letters)
     summary = _data_summary(model.get("dataSummary"))
     if summary is not None:
         sections.append(summary)

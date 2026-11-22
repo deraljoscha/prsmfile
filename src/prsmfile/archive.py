@@ -56,9 +56,9 @@ class Analysis:
     parameters: dict = field(default_factory=dict)
     results: dict | None = None
     inputs: list[tuple[str, str]] = field(default_factory=list)  # (letter, title or letter)
-    input_titles: list[str | None] = field(default_factory=list)  # title as stored, None if blank; parallel to inputs
     views: list[tuple[str, str | None]] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
+    input_titles: list[str | None] = field(default_factory=list)  # title as stored, None if blank; parallel to inputs
 
     # parameters and results are shared with the cache: treat them as read-only
 

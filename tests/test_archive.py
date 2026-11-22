@@ -419,3 +419,9 @@ def test_view_idx_huge_int_and_ints_stay_exact(tmp_path):
             % (uid, name, raw[name])).encode())
     with prsmfile.open(b.save(tmp_path / "a.prism")) as pf:
         assert [v[0] for v in pf.analyses()[0].views] == ["one", "two", "big", "none"]
+
+
+def test_analysis_positional_field_order():
+    a = Analysis("id", "t", "CLS", True, {"p": 1}, {"r": 2}, [("A", "x")], [("v", None)], ["al"])
+    assert a.parameters == {"p": 1} and a.results == {"r": 2} and a.inputs == [("A", "x")]
+    assert a.views == [("v", None)] and a.alerts == ["al"] and a.input_titles == []

@@ -9,6 +9,8 @@ from .common import (
     anova_row,
     comparisons_section,
     descriptive_section,
+    family_rows,
+    letters_section,
     parameters_section,
 )
 
@@ -55,6 +57,7 @@ def read_oneway(pf, a, warn):
         ("Design", _str(params.get("experimentalDesign"))),
         ("Post test design", _str(pairwise.get("type"))),
         ("Method", _str(mc.get("method"))),
+        *family_rows(mc),
     ])
     if parameters.rows:
         sections.append(parameters)
@@ -74,6 +77,9 @@ def read_oneway(pf, a, warn):
     comparisons = comparisons_section(mc)
     if comparisons.rows:
         sections.append(comparisons)
+    letters = letters_section(model.get("compactLetterDisplay"))
+    if letters is not None:
+        sections.append(letters)
     desc = descriptive_section(results.get("descriptiveStatistics"))
     if desc.rows:
         sections.append(desc)
