@@ -125,29 +125,32 @@ def read_twoway(pf, a, warn):
     by_rows = post.get("meansDesignType") == _BY_ROWS
     mark_fixed: set[str] = set()
     mark_comp = False
+    has_cm = isinstance(model.get("differenceBetweenColMeans"), dict)
+    cm_note = ("; the difference between column means is listed under Other values without a mark"
+               if has_cm else "")
     if key == _GLM and _sphericity_off(rm):
         warn("Sphericity not assumed: stored values are Geisser-Greenhouse corrected and matched Prism "
              "in the test corpus, but one cross-check with Prism 11.2 found a differing row "
              "(DFn, DFd, P). Compare with Prism if these values matter.")
     if sit_a:
         mark_fixed |= {"DFn", "DFd", "P"}
-        what = "DFn, DFd and P for the fixed effects and the confidence interval of the difference " \
-               "between column means"
+        what = "DFn, DFd and P for the fixed effects"
+        if has_cm:
+            what += " and the confidence interval of the difference between column means"
         if by_rows:
             what += ", and recomputes the multiple comparisons (mean difference, SE, confidence " \
                     "interval, statistic and adjusted P)"
             mark_comp = True
         warn(f"Sphericity not assumed: Prism shows corrected {what}; prsmfile shows the stored "
-             "uncorrected values (marked '(uncorrected)' where the column is affected; the "
-             "difference between column means is listed under Other values without a mark). "
-             "Read the corrected values in Prism.")
+             "uncorrected values (marked '(uncorrected)' where the column is affected"
+             f"{cm_note}). Read the corrected values in Prism.")
     if sit_b:
         mark_fixed |= {"DFd", "P"}
+        cm = (" and changes the confidence interval of the difference between column means"
+              if has_cm else "")
         warn("Subject variance is 0: Prism reports DFd and P of the fixed effects from a model without "
-             "the subject effect, hides the matching test and changes the confidence interval of the "
-             "difference between column means; prsmfile shows the stored REML values (marked "
-             "'(uncorrected)' for the fixed effects; the difference between column means is listed "
-             "under Other values without a mark). Read the corrected values in Prism.")
+             f"the subject effect, hides the matching test{cm}; prsmfile shows the stored REML values "
+             f"(marked '(uncorrected)' for the fixed effects{cm_note}). Read the corrected values in Prism.")
     sections: list[Section] = []
     parameters = parameters_section([
         ("Design", _str(params.get("experimentalDesign"))),

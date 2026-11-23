@@ -374,3 +374,12 @@ def test_comparison_sample_columns(tmp_path):
     s = sec(r, "Multiple comparisons (Sidak)")
     assert s.columns[:5] == ["Comparison", "Mean 1", "n 1", "Mean 2", "n 2"]
     assert s.rows[0][1:5] == [3.0, 4.0, 2.5, 5.0]
+
+
+def test_warnings_mention_column_means_only_when_stored(tmp_path):
+    m = reml_with_mc()
+    m.pop("differenceBetweenColMeans", None)
+    m["randomEffects"]["matchedFactor"]["variance"] = 0.0
+    r = run(tmp_path, res(m, REML), rm_params(NOSPH, BY_ROWS))
+    assert len(r.warnings) == 2
+    assert not any("column means" in w for w in r.warnings)
