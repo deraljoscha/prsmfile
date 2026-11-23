@@ -7,7 +7,7 @@ from .report import Report, Section
 from .tables import Table, read_table
 from .values import PValue
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "open", "PrismFile", "Analysis", "PrismFormatError", "PValue",

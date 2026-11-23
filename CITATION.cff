@@ -4,7 +4,7 @@ message: If you use this software, please cite it using the metadata in this fil
 type: software
 authors:
   - alias: deraljoscha
-version: 0.1.1
+version: 0.1.2
 date-released: 2026-11-23
 license: MIT
 repository-code: https://github.com/deraljoscha/prsmfile
