@@ -415,7 +415,7 @@ ones at render time in two situations.
 `dfNumerator`, `dfDenominator` and `pValue`; F matches. `differenceBetweenColMeans.differenceCI` also
 differs, and with `postTests.pairwiseTests.meansDesignType`
 `COMPARE_CELLS_BY_ROWS_WITHIN_COLUMNS_SEPARATE_FAMILIES` the multiple comparisons (means, n, mean difference, SE,
-CI, statistic, adjusted P) differ; means and n match.
+CI, statistic, adjusted P) differ; the stored means and n are correct per cell, but the rows Prism displays pair other cells, so means and n per row differ as well.
 (B) `randomEffects.matchedFactor.variance` is exactly 0: Prism displays DFd and P of the fixed
 effects from a model without the subject effect (F and DFn match), omits the Matching section, and
 `differenceBetweenColMeans.differenceCI` differs. With `assumeSphericity` true and a subject variance
