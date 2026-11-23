@@ -406,14 +406,17 @@ cols -> `repeatedMeasuresGlmAnovaModel` (13), RM by rows -> `repeatedMeasuresGlm
 Stub results: 7 ORDINARY + 3 RM-by-rows.
 
 Stored versus displayed values in repeated measures models (checked against Prism exports):
-Prism stores uncorrected values and computes the displayed ones at render time in two situations.
-(A) `parameters.json` `repeatedMeasures.assumeSphericity` is false (GLM or REML): the displayed DFn,
-DFd and P of the ANOVA table rows (GLM) or `fixedEffects` (REML) differ from the stored
-`dfNumerator`, `dfDenominator` and `pValue`; F and `variation` match. With REML,
-`differenceBetweenColMeans.differenceCI` also differs, and with `postTests.pairwiseTests.meansDesignType`
+GLM (`repeatedMeasuresGlmAnovaModel`) with `repeatedMeasures.assumeSphericity` false stores
+Geisser-Greenhouse corrected DFn, DFd and P (DFn = df x `ggEpsilon`); verified on 2 corpus analyses,
+where they match Prism's rendered table. One cross-check with Prism 11.2 found a differing row.
+For REML (`repeatedMeasuresRemlAnovaModel`) Prism stores uncorrected values and computes the displayed
+ones at render time in two situations.
+(A) `assumeSphericity` is false: the displayed DFn, DFd and P of `fixedEffects` differ from the stored
+`dfNumerator`, `dfDenominator` and `pValue`; F matches. `differenceBetweenColMeans.differenceCI` also
+differs, and with `postTests.pairwiseTests.meansDesignType`
 `COMPARE_CELLS_BY_ROWS_WITHIN_COLUMNS_SEPARATE_FAMILIES` the multiple comparisons (mean difference, SE,
-CI, statistic, adjusted P) differ; means and n match. GLM comparisons with that design matched.
-(B) REML with `randomEffects.matchedFactor.variance` exactly 0: Prism displays DFd and P of the fixed
+CI, statistic, adjusted P) differ; means and n match.
+(B) `randomEffects.matchedFactor.variance` is exactly 0: Prism displays DFd and P of the fixed
 effects from a model without the subject effect (F and DFn match), omits the Matching section, and
 `differenceBetweenColMeans.differenceCI` differs. With `assumeSphericity` true and a subject variance
 above 0, GLM and REML matched Prism completely.

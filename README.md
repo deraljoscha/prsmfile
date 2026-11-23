@@ -147,17 +147,20 @@ so nothing is dropped silently.
   (not calculated), prsmfile says so. Open the file in Prism, view the results and save again.
 - Files written by Prism 10.0 often carry result stubs. For those, the rendered result tables
   are shown instead, marked as rounded values.
-- Repeated measures two-way ANOVA: Prism stores uncorrected values and computes the displayed
-  ones at render time in two situations. prsmfile shows the stored values, marks the affected
-  columns with " (uncorrected)" and prints a warning; read the corrected values in Prism.
-  (1) Sphericity not assumed (GLM or REML): DFn, DFd and P of the ANOVA table (GLM) or the fixed
-  effects (REML) are corrected in Prism. With REML, the confidence interval of the difference
-  between column means (listed under "Other values", not marked) also differs, and with the post
-  test design "compare cells by rows within columns, separate families" the multiple comparisons
-  (mean difference, SE, confidence interval, statistic, P) differ too.
-  (2) REML with a subject variance of exactly 0: Prism reports DFd and P of the fixed effects from
-  a model without the subject effect, hides the matching test and changes the confidence
-  interval of the difference between column means. prsmfile still lists the stored Matching section.
+- Repeated measures two-way ANOVA, mixed model REML: Prism stores uncorrected values and computes
+  the displayed ones at render time in two situations. prsmfile shows the stored values, marks the
+  affected columns with " (uncorrected)" and prints a warning; read the corrected values in Prism.
+  (1) Sphericity not assumed: DFn, DFd and P of the fixed effects are corrected in Prism. The
+  confidence interval of the difference between column means (listed under "Other values", not
+  marked) also differs, and with the post test design "compare cells by rows within columns,
+  separate families" the multiple comparisons (mean difference, SE, confidence interval,
+  statistic, P) differ too.
+  (2) A subject variance of exactly 0: Prism reports DFd and P of the fixed effects from a model
+  without the subject effect, hides the matching test and changes the confidence interval of the
+  difference between column means. prsmfile still lists the stored Matching section.
+- Repeated measures GLM two-way ANOVA without sphericity: the stored DFn, DFd and P are
+  Geisser-Greenhouse corrected and matched Prism in the test corpus, but one cross-check with
+  Prism 11.2 found a differing row. prsmfile prints a warning and does not mark columns.
 - In repeated measures GLM two-way ANOVA the subjects row is only present in Prism's rendered
   table, not in the stored numbers. prsmfile prints a warning in that case.
 - Text tables align by character count. Wide characters (for example CJK) occupy two columns in a

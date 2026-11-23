@@ -104,16 +104,18 @@ def test_ordinary_never_marked_or_warned(tmp_path):
     assert r.warnings == [] and marked(sec(r, "ANOVA")) == []
 
 
-def test_glm_sphericity_off_marks_anova_only(tmp_path):
+GLM_WARNING = ("Sphericity not assumed: stored values are Geisser-Greenhouse corrected and matched Prism "
+               "in the test corpus, but one cross-check with Prism 11.2 found a differing row "
+               "(DFn, DFd, P). Compare with Prism if these values matter.")
+
+
+def test_glm_sphericity_off_has_no_marks_but_warns(tmp_path):
     m = glm_model()
     m["multipleComparisons"] = reml_with_mc()["multipleComparisons"]
     r = run(tmp_path, res(m, GLM), rm_params({"method": "OPTIONAL", "assumeSphericity": False}, BY_ROWS))
-    a = sec(r, "ANOVA")
-    assert marked(a) == ["DFn" + UNC, "DFd" + UNC, "P" + UNC]
-    assert "F" in a.columns and "df" in a.columns and "% of total" in a.columns
-    assert a.rows[0][a.columns.index("F")] == 2.0
-    assert len([w for w in r.warnings if w.startswith("Sphericity not assumed")]) == 1
+    assert marked(sec(r, "ANOVA")) == []
     assert marked(sec(r, "Multiple comparisons (TUKEY)")) == []
+    assert r.warnings == [GLM_WARNING]
 
 
 def test_reml_sphericity_off_by_rows_marks_fixed_and_comparisons(tmp_path):

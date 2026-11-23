@@ -120,28 +120,27 @@ def read_twoway(pf, a, warn):
     post = _dict(_dict(params.get("postTests")).get("pairwiseTests"))
     names = _dict(model.get("factorNames"))
     mc = _dict(model.get("multipleComparisons"))
-    sit_a = key in (_GLM, _REML) and _sphericity_off(rm)
+    sit_a = key == _REML and _sphericity_off(rm)
     sit_b = key == _REML and _zero_subject_variance(_dict(model))
     by_rows = post.get("meansDesignType") == _BY_ROWS
     mark_fixed: set[str] = set()
     mark_comp = False
+    if key == _GLM and _sphericity_off(rm):
+        warn("Sphericity not assumed: stored values are Geisser-Greenhouse corrected and matched Prism "
+             "in the test corpus, but one cross-check with Prism 11.2 found a differing row "
+             "(DFn, DFd, P). Compare with Prism if these values matter.")
     if sit_a:
         mark_fixed |= {"DFn", "DFd", "P"}
-        if key == _GLM:
-            warn("Sphericity not assumed: Prism shows corrected DFn, DFd and P for the ANOVA table; "
-                 "prsmfile shows the stored uncorrected values (marked '(uncorrected)'). "
-                 "Read the corrected values in Prism.")
-        else:
-            what = "DFn, DFd and P for the fixed effects and the confidence interval of the difference " \
-                   "between column means"
-            if by_rows:
-                what += ", and recomputes the multiple comparisons (mean difference, SE, confidence " \
-                        "interval, statistic and adjusted P)"
-                mark_comp = True
-            warn(f"Sphericity not assumed: Prism shows corrected {what}; prsmfile shows the stored "
-                 "uncorrected values (marked '(uncorrected)' where the column is affected; the "
-                 "difference between column means is listed under Other values without a mark). "
-                 "Read the corrected values in Prism.")
+        what = "DFn, DFd and P for the fixed effects and the confidence interval of the difference " \
+               "between column means"
+        if by_rows:
+            what += ", and recomputes the multiple comparisons (mean difference, SE, confidence " \
+                    "interval, statistic and adjusted P)"
+            mark_comp = True
+        warn(f"Sphericity not assumed: Prism shows corrected {what}; prsmfile shows the stored "
+             "uncorrected values (marked '(uncorrected)' where the column is affected; the "
+             "difference between column means is listed under Other values without a mark). "
+             "Read the corrected values in Prism.")
     if sit_b:
         mark_fixed |= {"DFd", "P"}
         warn("Subject variance is 0: Prism reports DFd and P of the fixed effects from a model without "
