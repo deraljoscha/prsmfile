@@ -6,9 +6,15 @@ Breaking changes in 0.x releases are listed here.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-23
+
 ### Security
 
 - Archive reading is bounded against zip bombs and oversized members: the file may be at most 2 GiB (checked before the member list is parsed; file objects must be seekable), with at most 100,000 members, 512 MiB per member and 4 GiB read in total per opened file (each member counted once, bytes of failed reads included, counter protected by a lock). The file is opened once and the size checked on that handle. Sizes in the archive are not trusted: members are counted as they are read through a bounded reader. Only stored and deflate members are read; bzip2 and lzma members are rejected because their decompression is not bounded. Archives with duplicate member names are rejected. A violation raises `PrismFormatError` naming the limit, and the member for the per-member and total limits (CLI exit 1). Corrupt members are handled as before.
+
+### Known issues
+
+- Repeated measures two-way ANOVA (GLM and mixed model REML): a cross-check against Prism exports found differences in some degrees of freedom, P values, confidence limits and multiple comparisons. These analyses now carry a warning. A fix is planned for 0.1.2.
 
 ## [0.1.0] - 2026-11-22
 
@@ -22,5 +28,6 @@ Breaking changes in 0.x releases are listed here.
 - Python API: `prsmfile.open`, `read_analysis`, `read_table` and a reader registry.
 - Warnings for result stubs, not calculated analyses and other known limitations.
 
-[Unreleased]: https://github.com/deraljoscha/prsmfile/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/deraljoscha/prsmfile/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/deraljoscha/prsmfile/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/deraljoscha/prsmfile/releases/tag/v0.1.0

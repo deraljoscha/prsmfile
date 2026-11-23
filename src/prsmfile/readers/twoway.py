@@ -36,6 +36,11 @@ _ANOVA_ROWS = (
 _FIXED_ROWS = (("rowFactor", "Row factor"), ("colFactor", "Column factor"),
                ("rowFactorVsColFactor", "Interaction"))
 _RANDOM_NAMES = {"matchedFactor": "Subject", "residual": "Residual"}
+# Cross-check against Prism exports (0.1.0) found differences in repeated measures models; the
+# cause is not known yet, so these results carry a warning until it is fixed.
+_RM_UNVERIFIED = ("Repeated measures two-way ANOVA: some stored values (degrees of freedom, P values, "
+                  "confidence limits, multiple comparisons) can differ from Prism's display. "
+                  "Check them against the results in Prism (known issue, fix planned for 0.1.2).")
 
 
 def _dict(x) -> dict:
@@ -101,6 +106,8 @@ def read_twoway(pf, a, warn):
     post = _dict(_dict(params.get("postTests")).get("pairwiseTests"))
     names = _dict(model.get("factorNames"))
     mc = _dict(model.get("multipleComparisons"))
+    if key in (_GLM, _REML):
+        warn(_RM_UNVERIFIED)
     sections: list[Section] = []
     parameters = parameters_section([
         ("Design", _str(params.get("experimentalDesign"))),

@@ -64,6 +64,20 @@ def res(model, key=ORD, **extra):
     return {"status": OK, key: m}
 
 
+RM_UNVERIFIED = ("Repeated measures two-way ANOVA: some stored values (degrees of freedom, P values, "
+                 "confidence limits, multiple comparisons) can differ from Prism's display. "
+                 "Check them against the results in Prism (known issue, fix planned for 0.1.2).")
+
+
+def test_rm_models_warn_unverified(tmp_path):
+    glm = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1), "matchedFactor": node(9, 3, 3.0)}}, GLM))
+    reml = run(tmp_path, res(reml_model(), REML))
+    ordinary = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}}))
+    assert glm.warnings.count(RM_UNVERIFIED) == 1
+    assert reml.warnings.count(RM_UNVERIFIED) == 1
+    assert RM_UNVERIFIED not in ordinary.warnings
+
+
 def test_ordinary_rows_order(tmp_path):
     table = {"rowFactor": node(1, 1, 1, 10.0, 5.0), "colFactor": node(2, 2, 1, 20.0, 6.0),
              "rowFactorVsColFactor": node(3, 2, 1.5, 30.0, 7.0), "residual": node(4, 12, 0.3, 40.0)}
@@ -109,7 +123,7 @@ def reml_model():
 def test_reml_fixed_and_random(tmp_path):
     r = run(tmp_path, res(reml_model(), REML), {"experimentalDesign": "REPEATED_MEASURES_BY_ROWS",
             "repeatedMeasures": {"method": "REML"}})
-    assert r.kind == "structured" and r.warnings == []
+    assert r.kind == "structured" and r.warnings == [RM_UNVERIFIED]
     assert "ANOVA" not in titles(r)
     f = sec(r, "Fixed effects")
     assert f.columns == ["Source", "F", "DFn", "DFd", "P"]
@@ -220,7 +234,7 @@ def test_glm_without_subjects_row_warns(tmp_path):
 
 def test_no_subjects_warning_when_present_or_not_glm(tmp_path):
     m = {"anovaTable": {"rowFactor": node(1, 1, 1), "matchedFactor": node(9, 3, 3.0)}}
-    assert run(tmp_path, res(m, GLM)).warnings == []
+    assert run(tmp_path, res(m, GLM)).warnings == [RM_UNVERIFIED]
     assert run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}})).warnings == []
 
 
