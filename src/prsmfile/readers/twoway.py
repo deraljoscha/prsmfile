@@ -36,11 +36,9 @@ _ANOVA_ROWS = (
 _FIXED_ROWS = (("rowFactor", "Row factor"), ("colFactor", "Column factor"),
                ("rowFactorVsColFactor", "Interaction"))
 _RANDOM_NAMES = {"matchedFactor": "Subject", "residual": "Residual"}
-# Cross-check against Prism exports (0.1.0) found differences in repeated measures models; the
-# cause is not known yet, so these results carry a warning until it is fixed.
-_RM_UNVERIFIED = ("Repeated measures two-way ANOVA: some stored values (degrees of freedom, P values, "
-                  "confidence limits, multiple comparisons) can differ from Prism's display. "
-                  "Check them against the results in Prism (known issue, fix planned for 0.1.2).")
+_BY_ROWS = "COMPARE_CELLS_BY_ROWS_WITHIN_COLUMNS_SEPARATE_FAMILIES"
+_UNC = " (uncorrected)"
+_COMPARISON_MARKED = ("Mean diff", "SE", "CI lower", "CI upper", "Statistic", "P adjusted", "P individual")
 
 
 def _dict(x) -> dict:
@@ -53,6 +51,22 @@ def _str(x) -> str | None:
 
 def _bool(x) -> bool | None:
     return x if isinstance(x, bool) else None
+
+
+def _mark(section: Section | None, names) -> None:
+    """Append " (uncorrected)" to the named columns of a section (values stay unchanged)."""
+    if section is None:
+        return
+    section.columns = [c + _UNC if c in names and not c.endswith(_UNC) else c for c in section.columns]
+
+
+def _sphericity_off(rm: dict) -> bool:
+    return rm.get("assumeSphericity") is False
+
+
+def _zero_subject_variance(model: dict) -> bool:
+    v = _dict(_dict(model.get("randomEffects")).get("matchedFactor")).get("variance")
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == 0
 
 
 def _anova_section(table: dict) -> Section | None:
@@ -106,8 +120,35 @@ def read_twoway(pf, a, warn):
     post = _dict(_dict(params.get("postTests")).get("pairwiseTests"))
     names = _dict(model.get("factorNames"))
     mc = _dict(model.get("multipleComparisons"))
-    if key in (_GLM, _REML):
-        warn(_RM_UNVERIFIED)
+    sit_a = key in (_GLM, _REML) and _sphericity_off(rm)
+    sit_b = key == _REML and _zero_subject_variance(_dict(model))
+    by_rows = post.get("meansDesignType") == _BY_ROWS
+    mark_fixed: set[str] = set()
+    mark_comp = False
+    if sit_a:
+        mark_fixed |= {"DFn", "DFd", "P"}
+        if key == _GLM:
+            warn("Sphericity not assumed: Prism shows corrected DFn, DFd and P for the ANOVA table; "
+                 "prsmfile shows the stored uncorrected values (marked '(uncorrected)'). "
+                 "Read the corrected values in Prism.")
+        else:
+            what = "DFn, DFd and P for the fixed effects and the confidence interval of the difference " \
+                   "between column means"
+            if by_rows:
+                what += ", and recomputes the multiple comparisons (mean difference, SE, confidence " \
+                        "interval, statistic and adjusted P)"
+                mark_comp = True
+            warn(f"Sphericity not assumed: Prism shows corrected {what}; prsmfile shows the stored "
+                 "uncorrected values (marked '(uncorrected)' where the column is affected; the "
+                 "difference between column means is listed under Other values without a mark). "
+                 "Read the corrected values in Prism.")
+    if sit_b:
+        mark_fixed |= {"DFd", "P"}
+        warn("Subject variance is 0: Prism reports DFd and P of the fixed effects from a model without "
+             "the subject effect, hides the matching test and changes the confidence interval of the "
+             "difference between column means; prsmfile shows the stored REML values (marked "
+             "'(uncorrected)' for the fixed effects; the difference between column means is listed "
+             "under Other values without a mark). Read the corrected values in Prism.")
     sections: list[Section] = []
     parameters = parameters_section([
         ("Design", _str(params.get("experimentalDesign"))),
@@ -130,8 +171,11 @@ def read_twoway(pf, a, warn):
         parts = [_anova_section(table)]
         if key == _GLM and "matchedFactor" not in table:
             warn("Subjects row only in Prism's rendered table (view ANOVA results).")
+    _mark(parts[0], mark_fixed)
     sections.extend(s for s in parts if s is not None)
     comparisons = comparisons_section(mc)
+    if mark_comp:
+        _mark(comparisons, _COMPARISON_MARKED)
     if comparisons.rows:
         sections.append(comparisons)
     letters = letters_section(model.get("compactLetterDisplay"))

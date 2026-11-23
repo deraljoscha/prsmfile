@@ -6,6 +6,14 @@ Breaking changes in 0.x releases are listed here.
 
 ## [Unreleased]
 
+### Changed
+
+- Repeated measures two-way ANOVA: column names change in the affected cases, which matters for JSON and CSV consumers. When sphericity is not assumed, DFn, DFd and P of the ANOVA table (GLM) or Fixed effects section (REML) become "DFn (uncorrected)", "DFd (uncorrected)" and "P (uncorrected)". With REML and the post test design "compare cells by rows within columns, separate families", the multiple comparisons columns Mean diff, SE, CI lower, CI upper, Statistic, P adjusted and P individual get the same suffix. When a REML model has a subject variance of exactly 0, DFd and P of Fixed effects are marked. Values are unchanged.
+
+### Fixed
+
+- The blanket warning for all repeated measures two-way ANOVA is replaced by two precise warnings (sphericity not assumed; subject variance 0) that name the reason and the affected sections. Analyses with sphericity assumed and a subject variance above 0 match Prism and carry no warning.
+
 ## [0.1.1] - 2026-11-23
 
 ### Security
