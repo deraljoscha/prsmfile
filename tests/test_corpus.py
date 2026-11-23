@@ -228,7 +228,8 @@ def _check_twoway(pf, a, report, reml):
         src = r[0]
         if src not in ("Row factor", "Column factor", "Interaction"):
             continue
-        f, p = _num(r[sec.columns.index("F")]), _pvalue(r[sec.columns.index("P")])
+        cols = [c.removesuffix(" (uncorrected)") for c in sec.columns]
+        f, p = _num(r[cols.index("F")]), _pvalue(r[cols.index("P")])
         if f is None and p is None:
             continue
         if src == "Interaction":

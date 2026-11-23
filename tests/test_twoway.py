@@ -64,18 +64,121 @@ def res(model, key=ORD, **extra):
     return {"status": OK, key: m}
 
 
-RM_UNVERIFIED = ("Repeated measures two-way ANOVA: some stored values (degrees of freedom, P values, "
-                 "confidence limits, multiple comparisons) can differ from Prism's display. "
-                 "Check them against the results in Prism (known issue, fix planned for 0.1.2).")
+UNC = " (uncorrected)"
+BY_ROWS = "COMPARE_CELLS_BY_ROWS_WITHIN_COLUMNS_SEPARATE_FAMILIES"
+BY_COLS = "COMPARE_CELLS_BY_COLUMNS_WITHIN_ROWS_SINGLE_FAMILY"
+SPH = {"method": "REML", "assumeSphericity": True}
+NOSPH = {"method": "REML", "assumeSphericity": False}
 
 
-def test_rm_models_warn_unverified(tmp_path):
-    glm = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1), "matchedFactor": node(9, 3, 3.0)}}, GLM))
-    reml = run(tmp_path, res(reml_model(), REML))
-    ordinary = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}}))
-    assert glm.warnings.count(RM_UNVERIFIED) == 1
-    assert reml.warnings.count(RM_UNVERIFIED) == 1
-    assert RM_UNVERIFIED not in ordinary.warnings
+def rm_params(rm, design=BY_COLS):
+    return {"experimentalDesign": "REPEATED_MEASURES_BY_ROWS", "repeatedMeasures": rm,
+            "postTests": {"type": "PAIRWISE_TESTS", "pairwiseTests": {"meansDesignType": design}}}
+
+
+def marked(section):
+    return [c for c in section.columns if c.endswith(UNC)]
+
+
+def mc_model():
+    return {"method": "TUKEY", "tests": {}}
+
+
+def reml_with_mc(variance=0.64):
+    m = reml_model()
+    m["randomEffects"]["matchedFactor"]["variance"] = variance
+    t = {"value": {"meansDifference": 1.0, "meansDifferenceSE": 0.1, "statistic": 2.0, "df": 5.0,
+                   "pValueAdjusted": pobj(0.04), "sample1": {"value": {"mean": 3.0, "n": 4}},
+                   "sample2": {"value": {"mean": 2.0, "n": 4}},
+                   "meansDifferenceCI": {"lower": 0.1, "upper": 1.9, "level": 95.0}}}
+    m["multipleComparisons"] = {"method": "TUKEY", "tests": {"a": {"value": {"b": t}}}}
+    return m
+
+
+def glm_model():
+    return {"anovaTable": {"rowFactor": node(1, 1, 1, 5.0, 2.0), "matchedFactor": node(9, 3, 3.0)}}
+
+
+def test_ordinary_never_marked_or_warned(tmp_path):
+    r = run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1, 5.0, 2.0)}}))
+    assert r.warnings == [] and marked(sec(r, "ANOVA")) == []
+
+
+GLM_WARNING = ("Sphericity not assumed: stored values are Geisser-Greenhouse corrected and matched Prism "
+               "in the test corpus, but one cross-check with Prism 11.2 found a differing row "
+               "(DFn, DFd, P). Compare with Prism if these values matter.")
+
+
+def test_glm_sphericity_off_has_no_marks_but_warns(tmp_path):
+    m = glm_model()
+    m["multipleComparisons"] = reml_with_mc()["multipleComparisons"]
+    r = run(tmp_path, res(m, GLM), rm_params({"method": "OPTIONAL", "assumeSphericity": False}, BY_ROWS))
+    assert marked(sec(r, "ANOVA")) == []
+    assert marked(sec(r, "Multiple comparisons (TUKEY)")) == []
+    assert r.warnings == [GLM_WARNING]
+
+
+def test_reml_sphericity_off_by_rows_marks_fixed_and_comparisons(tmp_path):
+    r = run(tmp_path, res(reml_with_mc(), REML), rm_params(NOSPH, BY_ROWS))
+    assert marked(sec(r, "Fixed effects")) == ["DFn" + UNC, "DFd" + UNC, "P" + UNC]
+    c = sec(r, "Multiple comparisons (TUKEY)")
+    want = ("Mean 1", "Mean 2", "n 1", "n 2", "Mean diff", "SE", "CI lower", "CI upper", "Statistic",
+            "P adjusted", "P individual")
+    assert sorted(marked(c)) == sorted(x + UNC for x in want if x + UNC in c.columns)
+    assert {"Mean 1" + UNC, "n 1" + UNC} <= set(c.columns)
+    assert "CI level" in c.columns and "df" in c.columns
+    assert c.rows[0][c.columns.index("Mean diff" + UNC)] == 1.0
+    assert len(r.warnings) == 1 and "multiple comparisons" in r.warnings[0]
+    assert "confidence interval of the difference between column means" in r.warnings[0]
+    assert "Matching" in titles(r)
+
+
+def test_reml_sphericity_off_by_columns_marks_fixed_only(tmp_path):
+    r = run(tmp_path, res(reml_with_mc(), REML), rm_params(NOSPH, BY_COLS))
+    assert marked(sec(r, "Fixed effects")) == ["DFn" + UNC, "DFd" + UNC, "P" + UNC]
+    assert marked(sec(r, "Multiple comparisons (TUKEY)")) == []
+    assert "recomputes" not in r.warnings[0]
+
+
+def test_reml_zero_subject_variance_marks_dfd_p(tmp_path):
+    r = run(tmp_path, res(reml_with_mc(0), REML), rm_params(SPH, BY_ROWS))
+    f = sec(r, "Fixed effects")
+    assert marked(f) == ["DFd" + UNC, "P" + UNC] and "DFn" in f.columns and "F" in f.columns
+    assert marked(sec(r, "Multiple comparisons (TUKEY)")) == []
+    assert "Matching" in titles(r)
+    assert len(r.warnings) == 1 and r.warnings[0].startswith("Subject variance is 0")
+
+
+def test_zero_variance_must_be_number(tmp_path):
+    for v in (None, False, "0"):
+        r = run(tmp_path, res(reml_with_mc(v), REML), rm_params(SPH))
+        assert marked(sec(r, "Fixed effects")) == [] and r.warnings == []
+
+
+def test_sphericity_missing_or_non_bool_is_not_flagged(tmp_path):
+    for rm in ({"method": "REML"}, {"method": "REML", "assumeSphericity": "false"},
+               {"method": "REML", "assumeSphericity": None}):
+        r = run(tmp_path, res(reml_with_mc(), REML), rm_params(rm, BY_ROWS))
+        assert r.warnings == [] and marked(sec(r, "Fixed effects")) == []
+
+
+def test_sphericity_on_and_variance_positive_has_no_marks(tmp_path):
+    g = run(tmp_path, res(glm_model(), GLM), rm_params({"method": "OPTIONAL", "assumeSphericity": True}))
+    assert g.warnings == [] and marked(sec(g, "ANOVA")) == []
+    r = run(tmp_path, res(reml_with_mc(), REML), rm_params(SPH, BY_ROWS))
+    assert r.warnings == []
+    assert marked(sec(r, "Fixed effects")) == [] and marked(sec(r, "Multiple comparisons (TUKEY)")) == []
+
+
+def test_both_situations_union_without_duplicate_suffix(tmp_path):
+    r = run(tmp_path, res(reml_with_mc(0), REML), rm_params(NOSPH, BY_ROWS))
+    f = sec(r, "Fixed effects")
+    assert f.columns == ["Source", "F", "DFn" + UNC, "DFd" + UNC, "P" + UNC]
+    assert len(r.warnings) == 2
+    assert r.warnings[0].startswith("Sphericity not assumed")
+    assert r.warnings[1].startswith("Subject variance is 0")
+    assert all(UNC + UNC not in c for sct in r.sections for c in sct.columns)
+    assert not any(ch in w for w in r.warnings for ch in "\u2013\u2014")
 
 
 def test_ordinary_rows_order(tmp_path):
@@ -123,7 +226,7 @@ def reml_model():
 def test_reml_fixed_and_random(tmp_path):
     r = run(tmp_path, res(reml_model(), REML), {"experimentalDesign": "REPEATED_MEASURES_BY_ROWS",
             "repeatedMeasures": {"method": "REML"}})
-    assert r.kind == "structured" and r.warnings == [RM_UNVERIFIED]
+    assert r.kind == "structured" and r.warnings == []
     assert "ANOVA" not in titles(r)
     f = sec(r, "Fixed effects")
     assert f.columns == ["Source", "F", "DFn", "DFd", "P"]
@@ -234,7 +337,7 @@ def test_glm_without_subjects_row_warns(tmp_path):
 
 def test_no_subjects_warning_when_present_or_not_glm(tmp_path):
     m = {"anovaTable": {"rowFactor": node(1, 1, 1), "matchedFactor": node(9, 3, 3.0)}}
-    assert run(tmp_path, res(m, GLM)).warnings == [RM_UNVERIFIED]
+    assert run(tmp_path, res(m, GLM), rm_params({"method": "OPTIONAL", "assumeSphericity": True})).warnings == []
     assert run(tmp_path, res({"anovaTable": {"rowFactor": node(1, 1, 1)}})).warnings == []
 
 
@@ -274,3 +377,12 @@ def test_comparison_sample_columns(tmp_path):
     s = sec(r, "Multiple comparisons (Sidak)")
     assert s.columns[:5] == ["Comparison", "Mean 1", "n 1", "Mean 2", "n 2"]
     assert s.rows[0][1:5] == [3.0, 4.0, 2.5, 5.0]
+
+
+def test_warnings_mention_column_means_only_when_stored(tmp_path):
+    m = reml_with_mc()
+    m.pop("differenceBetweenColMeans", None)
+    m["randomEffects"]["matchedFactor"]["variance"] = 0.0
+    r = run(tmp_path, res(m, REML), rm_params(NOSPH, BY_ROWS))
+    assert len(r.warnings) == 2
+    assert not any("column means" in w for w in r.warnings)
