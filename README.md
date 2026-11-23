@@ -153,7 +153,7 @@ so nothing is dropped silently.
   (1) Sphericity not assumed: DFn, DFd and P of the fixed effects are corrected in Prism. The
   confidence interval of the difference between column means (listed under "Other values", not
   marked) also differs, and with the post test design "compare cells by rows within columns,
-  separate families" the multiple comparisons (mean difference, SE, confidence interval,
+  separate families" the multiple comparisons (means, n, mean difference, SE, confidence interval,
   statistic, P) differ too.
   (2) A subject variance of exactly 0: Prism reports DFd and P of the fixed effects from a model
   without the subject effect, hides the matching test and changes the confidence interval of the

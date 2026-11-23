@@ -414,7 +414,7 @@ ones at render time in two situations.
 (A) `assumeSphericity` is false: the displayed DFn, DFd and P of `fixedEffects` differ from the stored
 `dfNumerator`, `dfDenominator` and `pValue`; F matches. `differenceBetweenColMeans.differenceCI` also
 differs, and with `postTests.pairwiseTests.meansDesignType`
-`COMPARE_CELLS_BY_ROWS_WITHIN_COLUMNS_SEPARATE_FAMILIES` the multiple comparisons (mean difference, SE,
+`COMPARE_CELLS_BY_ROWS_WITHIN_COLUMNS_SEPARATE_FAMILIES` the multiple comparisons (means, n, mean difference, SE,
 CI, statistic, adjusted P) differ; means and n match.
 (B) `randomEffects.matchedFactor.variance` is exactly 0: Prism displays DFd and P of the fixed
 effects from a model without the subject effect (F and DFn match), omits the Matching section, and

@@ -38,7 +38,7 @@ _FIXED_ROWS = (("rowFactor", "Row factor"), ("colFactor", "Column factor"),
 _RANDOM_NAMES = {"matchedFactor": "Subject", "residual": "Residual"}
 _BY_ROWS = "COMPARE_CELLS_BY_ROWS_WITHIN_COLUMNS_SEPARATE_FAMILIES"
 _UNC = " (uncorrected)"
-_COMPARISON_MARKED = ("Mean diff", "SE", "CI lower", "CI upper", "Statistic", "P adjusted", "P individual")
+_COMPARISON_MARKED = ("Mean 1", "Mean 2", "n 1", "n 2", "Mean diff", "SE", "CI lower", "CI upper", "Statistic", "P adjusted", "P individual")
 
 
 def _dict(x) -> dict:
@@ -138,8 +138,8 @@ def read_twoway(pf, a, warn):
         if has_cm:
             what += " and the confidence interval of the difference between column means"
         if by_rows:
-            what += ", and recomputes the multiple comparisons (mean difference, SE, confidence " \
-                    "interval, statistic and adjusted P)"
+            what += ", and recomputes the multiple comparisons (means, n, mean difference, SE, " \
+                    "confidence interval, statistic and P)"
             mark_comp = True
         warn(f"Sphericity not assumed: Prism shows corrected {what}; prsmfile shows the stored "
              "uncorrected values (marked '(uncorrected)' where the column is affected"

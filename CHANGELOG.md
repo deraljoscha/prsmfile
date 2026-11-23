@@ -8,7 +8,7 @@ Breaking changes in 0.x releases are listed here.
 
 ### Changed
 
-- Repeated measures two-way ANOVA with mixed model REML: column names change in the affected cases, which matters for JSON and CSV consumers. When sphericity is not assumed, DFn, DFd and P of the Fixed effects section become "DFn (uncorrected)", "DFd (uncorrected)" and "P (uncorrected)". When sphericity is not assumed and the post test design is "compare cells by rows within columns, separate families", the multiple comparisons columns Mean diff, SE, CI lower, CI upper, Statistic, P adjusted and P individual get the same suffix. When a REML model has a subject variance of exactly 0, DFd and P of Fixed effects are marked. Values are unchanged. GLM models get no column marks.
+- Repeated measures two-way ANOVA with mixed model REML: column names change in the affected cases, which matters for JSON and CSV consumers. When sphericity is not assumed, DFn, DFd and P of the Fixed effects section become "DFn (uncorrected)", "DFd (uncorrected)" and "P (uncorrected)". When sphericity is not assumed and the post test design is "compare cells by rows within columns, separate families", the multiple comparisons columns Mean 1, Mean 2, n 1, n 2, Mean diff, SE, CI lower, CI upper, Statistic, P adjusted and P individual get the same suffix. When a REML model has a subject variance of exactly 0, DFd and P of Fixed effects are marked. Values are unchanged. GLM models get no column marks.
 
 ### Fixed
 

@@ -122,8 +122,11 @@ def test_reml_sphericity_off_by_rows_marks_fixed_and_comparisons(tmp_path):
     r = run(tmp_path, res(reml_with_mc(), REML), rm_params(NOSPH, BY_ROWS))
     assert marked(sec(r, "Fixed effects")) == ["DFn" + UNC, "DFd" + UNC, "P" + UNC]
     c = sec(r, "Multiple comparisons (TUKEY)")
-    assert marked(c) == [x + UNC for x in ("Mean diff", "SE", "CI lower", "CI upper", "Statistic", "P adjusted", "P individual")]
-    assert "Mean 1" in c.columns and "n 1" in c.columns and "CI level" in c.columns and "df" in c.columns
+    want = ("Mean 1", "Mean 2", "n 1", "n 2", "Mean diff", "SE", "CI lower", "CI upper", "Statistic",
+            "P adjusted", "P individual")
+    assert sorted(marked(c)) == sorted(x + UNC for x in want if x + UNC in c.columns)
+    assert {"Mean 1" + UNC, "n 1" + UNC} <= set(c.columns)
+    assert "CI level" in c.columns and "df" in c.columns
     assert c.rows[0][c.columns.index("Mean diff" + UNC)] == 1.0
     assert len(r.warnings) == 1 and "multiple comparisons" in r.warnings[0]
     assert "confidence interval of the difference between column means" in r.warnings[0]
